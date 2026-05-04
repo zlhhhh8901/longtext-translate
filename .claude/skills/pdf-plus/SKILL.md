@@ -299,6 +299,26 @@ Claude: "I'll use Mistral OCR. A few questions about the extraction:
 
 See mistral_ocr.md for complete documentation including local file processing, batch operations, and advanced options.
 
+#### Post-process OCR Markdown for Page-Break Paragraph Splits
+
+After removing page markers, page numbers, headers, and footers, always check whether the original page break left a false blank line inside a sentence or paragraph. This is common when OCR output is page-based: the previous page ends mid-sentence, the next page begins with the continuation, and cleanup removes the page furniture but leaves an empty line between the two fragments.
+
+Use a conservative repair pass, not global blank-line compression:
+
+1. Keep the raw OCR output for comparison.
+2. Remove obvious page furniture first: page comments, repeated headers/footers, and standalone page numbers.
+3. Scan every blank line with the previous and next non-empty lines. Treat it as a likely page-break split only when the surrounding text gives strong evidence of continuity:
+   - The previous line ends without sentence-ending punctuation, such as `.`, `?`, `!`, `。`, `？`, `！`, `;`, `；`, closing quotes/brackets, or a code fence.
+   - The next line starts like a continuation: lowercase English, a word fragment, or the second half of a Chinese word or phrase.
+   - The surrounding text matches a page boundary in the raw OCR output.
+4. Join only those lines. Use no separator for CJK word fragments, and a single space for English prose unless the break is clearly inside a hyphenated word.
+5. Do not join across headings, block quotes, code fences, lists, tables, bibliographies, footnotes, figure captions, or true paragraph starts.
+6. Re-read representative areas around every join, especially document openings, footnotes, and references.
+
+This method is mature enough as a **review-guided post-processing heuristic**, not as a fully automatic proof of correctness. It is safe when joins are restricted to obvious page-boundary continuations and verified against context. The main risk is false positives: a real paragraph break can also occur after a line that lacks punctuation, and notes or headings can look like continuations. Avoid broad rules such as "delete all blank lines after non-punctuation"; they will damage paragraph structure. When uncertain, leave the blank line in place and report the ambiguity.
+
+For long documents, write a short script that prints candidate blank lines with previous/next snippets, review the candidate list, then apply an explicit allowlist of joins. A useful verification script should report remaining suspicious blank lines rather than silently changing them.
+
 ### Add Watermark
 ```python
 from pypdf import PdfReader, PdfWriter
