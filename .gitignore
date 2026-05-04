@@ -41,5 +41,3 @@ vendor/libghostty-vt/.agents/
 .translate-skill/backend.yaml
 
 **/scripts/node_modules/
-
-test/
