@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>分片边界确认</title>
+  <style>
+    :root {
+      --bg: #f3f0e8;
+      --paper: #fffefa;
+      --paper-soft: #faf7ef;
+      --ink: #1f2328;
+      --muted: #6e6257;
+      --faint: #9a9086;
+      --line: #ded5c8;
+      --line-soft: #eee6dc;
+      --blue: #1258b0;
+      --blue-soft: #e8f1ff;
+      --green: #3f6b4f;
+      --green-soft: #eef7f0;
+      --amber: #8a6100;
+      --amber-soft: #fff5cf;
+      --purple: #765aa3;
+      --danger: #b42318;
+      --danger-soft: #fff1f0;
+      --shadow: 0 16px 45px rgba(48, 40, 29, .08), 0 1px 2px rgba(48, 40, 29, .08);
+      --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      --sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+      --serif: "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background:
+        radial-gradient(circle at top left, rgba(18, 88, 176, .08), transparent 34rem),
+        radial-gradient(circle at bottom right, rgba(138, 97, 0, .11), transparent 30rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+    .header {
+      flex: 0 0 auto;
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 24px;
+      background: rgba(255, 254, 250, .92);
+      border-bottom: 1px solid var(--line);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, .7), 0 10px 28px rgba(64, 52, 36, .08);
+      backdrop-filter: blur(12px);
+      z-index: 20;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      white-space: nowrap;
+    }
+
+    .divider { width: 1px; height: 20px; background: var(--line); }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+
+    .meta strong { color: var(--blue); font-weight: 700; }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      padding: 2px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-pill.changed {
+      border-color: rgba(18, 88, 176, .25);
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 34px;
+      border: 1px solid rgba(48, 40, 29, .18);
+      border-radius: 9px;
+      background: var(--paper);
+      color: var(--ink);
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, .8), 0 2px 6px rgba(48, 40, 29, .06);
+      transition: transform .14s ease, background .14s ease, border-color .14s ease, color .14s ease;
+    }
+
+    .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .button.primary:hover:not(:disabled) { background: #0b4a99; transform: translateY(-1px); }
+    .button:hover:not(:disabled) { background: #f8f4ec; transform: translateY(-1px); }
+    .button:disabled { opacity: .46; cursor: not-allowed; box-shadow: none; }
+
+    .main {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding: 20px 18px 80px;
+    }
+
+    .notice {
+      max-width: 1180px;
+      margin: 0 auto 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 254, 250, .9);
+      color: var(--muted);
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.55;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, .8);
+    }
+
+    .notice strong { color: var(--ink); }
+    .notice.warn { border-color: #d4a72c; background: var(--amber-soft); color: #5f3f00; }
+
+    .guide-row {
+      max-width: 1180px;
+      margin: 0 auto 14px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .guide-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 254, 250, .72);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, .75);
+    }
+
+    .guide-card strong {
+      display: block;
+      color: var(--ink);
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+
+    .workspace {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 190px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .editor {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .navigator {
+      position: sticky;
+      top: 18px;
+      max-height: calc(100vh - 118px);
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 254, 250, .76);
+      box-shadow: 0 10px 30px rgba(48, 40, 29, .07);
+      backdrop-filter: blur(10px);
+    }
+
+    .nav-title {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(255, 254, 250, .95);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .nav-title span:last-child {
+      color: var(--blue);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .nav-list { padding: 8px; }
+
+    .nav-item {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 8px;
+      align-items: center;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 9px;
+      text-align: left;
+      font-size: 12px;
+      transition: background .14s ease, border-color .14s ease, color .14s ease;
+    }
+
+    .nav-item:hover,
+    .nav-item.active {
+      border-color: rgba(18, 88, 176, .18);
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .nav-item-title { color: var(--ink); font-family: var(--mono); font-weight: 800; }
+    .nav-item.active .nav-item-title { color: var(--blue); }
+    .nav-item-meta { grid-column: 1 / -1; font-size: 11px; color: var(--faint); }
+
+    .nav-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .nav-dot.warn { background: var(--amber); }
+
+    .chunk { position: relative; border-bottom: 1px solid var(--line); scroll-margin-top: 18px; }
+    .chunk:last-child { border-bottom: 0; }
+    .chunk::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: var(--blue);
+      z-index: 3;
+    }
+
+    .chunk:nth-of-type(8n + 1)::before { background: var(--blue); }
+    .chunk:nth-of-type(8n + 3)::before { background: var(--green); }
+    .chunk:nth-of-type(8n + 5)::before { background: var(--purple); }
+    .chunk:nth-of-type(8n + 7)::before { background: #bf8700; }
+
+    .chunk-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 40px;
+      padding: 8px 14px 8px 58px;
+      background: linear-gradient(90deg, #fbf7ef, #fffefa);
+      border-bottom: 1px solid var(--line-soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .chunk-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .chunk-label strong { color: var(--ink); font-weight: 800; }
+
+    .chunk-stats {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 800;
+      background: var(--green-soft);
+      color: #1a7f37;
+    }
+
+    .badge.warn { background: var(--amber-soft); color: var(--amber); }
+
+    .para-row {
+      position: relative;
+      display: flex;
+      min-height: 42px;
+      border-bottom: 1px solid transparent;
+      border-top: 1px solid transparent;
+      margin-top: -1px;
+      transition: background .14s ease, border-color .14s ease;
+    }
+
+    .para-row:hover,
+    .para-row:focus-within { background: #fbf7ef; border-color: var(--line-soft); }
+    .para-row:hover .gutter,
+    .para-row:focus-within .gutter { color: var(--ink); }
+
+    .gutter {
+      flex: 0 0 48px;
+      width: 48px;
+      padding: 9px 11px 9px 0;
+      border-right: 1px solid var(--line-soft);
+      background: #fbf7ef;
+      color: var(--faint);
+      text-align: right;
+      user-select: none;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 24px;
+    }
+
+    .content {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 9px 144px 9px 15px;
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 24px;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .kind-heading .content {
+      font-family: var(--serif);
+      font-size: 19px;
+      font-weight: 800;
+      line-height: 1.45;
+      letter-spacing: .01em;
+      color: #15191d;
+      background: linear-gradient(90deg, rgba(18, 88, 176, .08), transparent 58%);
+    }
+
+    .kind-heading.level-1 .content { font-size: 24px; }
+    .kind-heading.level-2 .content { font-size: 21px; }
+    .kind-code .content,
+    .kind-html .content {
+      margin: 8px 144px 8px 15px;
+      padding: 12px 14px;
+      border: 1px solid #d8dee4;
+      border-radius: 10px;
+      background: #f6f8fa;
+      color: #24292f;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 20px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .kind-thematicBreak .content {
+      color: var(--faint);
+      letter-spacing: .18em;
+      text-align: center;
+    }
+
+    .kind-heading .gutter::after,
+    .kind-code .gutter::after,
+    .kind-html .gutter::after {
+      display: block;
+      margin-top: -2px;
+      font-family: var(--sans);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      color: var(--blue);
+    }
+
+    .kind-heading .gutter::after { content: "TITLE"; }
+    .kind-code .gutter::after { content: "CODE"; color: var(--amber); }
+    .kind-html .gutter::after { content: "HTML"; color: var(--amber); }
+
+    .actions {
+      position: absolute;
+      top: 50%;
+      right: 14px;
+      transform: translateY(-50%);
+      display: flex;
+      gap: 5px;
+      opacity: 0;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 254, 250, .96);
+      box-shadow: 0 8px 18px rgba(72, 62, 49, .12);
+      transition: opacity .14s ease, transform .14s ease;
+      z-index: 10;
+    }
+
+    .para-row:hover .actions,
+    .para-row:focus-within .actions { opacity: 1; transform: translateY(-50%) translateX(-2px); }
+
+    .small-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .small-action:hover { background: #f3eee5; color: var(--ink); }
+    .small-action.primary { color: var(--blue); }
+    .small-action.primary:hover { background: var(--blue-soft); }
+
+    .fold-row {
+      display: flex;
+      min-height: 34px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      margin-top: -1px;
+    }
+
+    .fold-row:hover { background: #d8ebff; }
+
+    .fold-gutter {
+      flex: 0 0 48px;
+      width: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid rgba(18, 88, 176, .18);
+      background: #ddecff;
+    }
+
+    .fold-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 15px;
+    }
+
+    .merge-divider {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: -1px;
+      border-top: 1px solid var(--line-soft);
+      border-bottom: 1px dashed var(--line);
+      background: repeating-linear-gradient(90deg, #fbf7ef 0 12px, #f6efe4 12px 24px);
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    .merge-divider:hover,
+    .merge-divider:focus-within { background: #e6f0ff; border-bottom-color: var(--blue); }
+
+    .merge-button {
+      opacity: .18;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper);
+      color: var(--muted);
+      padding: 4px 11px;
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: 0 2px 8px rgba(48, 40, 29, .07);
+      transform: translateY(2px);
+      transition: opacity .15s ease, transform .15s ease, color .15s ease, border-color .15s ease;
+    }
+
+    .merge-divider:hover .merge-button,
+    .merge-divider:focus-within .merge-button {
+      opacity: 1;
+      transform: translateY(0);
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translate(-50%, 16px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #24292f;
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(31, 35, 40, .24);
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+      z-index: 100;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast-icon { color: #3fb950; }
+    .toast-icon.error { color: #f85149; }
+
+    @media (max-width: 980px) {
+      .workspace { grid-template-columns: 1fr; }
+      .navigator { position: static; max-height: none; }
+      .nav-list { display: flex; overflow-x: auto; gap: 6px; }
+      .nav-item { min-width: 132px; }
+      .guide-row { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      body { overflow: auto; height: auto; min-height: 100vh; }
+      .header { align-items: flex-start; flex-direction: column; padding: 14px 16px; }
+      .main { overflow: visible; padding: 14px 10px 64px; }
+      .content { display: block; padding-right: 14px; }
+      .kind-code .content,
+      .kind-html .content { margin-right: 14px; }
+      .actions { position: static; opacity: 1; transform: none; margin: 8px 0 0; width: max-content; }
+      .para-row:hover .actions,
+      .para-row:focus-within .actions { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="title-row">
+      <h1>分片边界确认</h1>
+      <div class="divider"></div>
+      <div class="meta">
+        <span>源文件：<strong id="sourceName">--</strong></span>
+        <span>当前分片：<strong id="chunkCount">--</strong></span>
+        <span>建议上限：<strong id="maxWords">--</strong></span>
+        <span class="status-pill" id="statusPill">未加载</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="button" id="undoButton" disabled>撤销</button>
+      <button class="button" id="resetButton" disabled>重置</button>
+      <button class="button primary" id="copyButton" disabled>无需复制</button>
+      <button class="button" id="downloadButton" disabled>下载方案</button>
+    </div>
+  </header>
+
+  <main class="main" id="main">
+    <div class="notice" id="notice">正在加载分片预览。</div>
+    <div class="guide-row" id="guideRow" hidden>
+      <div class="guide-card"><strong>看结构</strong>标题、代码和普通段落会用不同样式显示，优先检查分片是否切断章节或连续论证。</div>
+      <div class="guide-card"><strong>调边界</strong>悬停段落可并入相邻分片或从当前位置拆分，悬停两片之间的虚线可合并。</div>
+      <div class="guide-card"><strong>交回 Agent</strong>没有调整时直接回到对话确认；调整后复制方案并粘贴给 Agent。</div>
+    </div>
+    <div class="workspace">
+      <section class="editor" id="editor" aria-label="分片边界确认"></section>
+      <aside class="navigator" id="navigator" aria-label="分片导航" hidden>
+        <div class="nav-title"><span>Chunks</span><span id="overview">--</span></div>
+        <div class="nav-list" id="navList"></div>
+      </aside>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"><span class="toast-icon" id="toastIcon">●</span><span id="toastText">操作成功</span></div>
+
+  <script type="application/json" id="previewData">__CHUNK_PREVIEW_DATA__</script>
+  <script>
+    const collapseThreshold = 10;
+    const maxHistory = 50;
+    const expandedChunks = new Set();
+
+    let segments = [];
+    let chunks = [];
+    let originalChunks = [];
+    let history = [];
+    let sourceNameValue = "";
+    let sourceSha256 = "";
+    let splitter = "";
+    let maxWordsValue = 0;
+    let pendingScrollFrame = false;
+
+    const main = document.getElementById("main");
+    const editor = document.getElementById("editor");
+    const notice = document.getElementById("notice");
+    const guideRow = document.getElementById("guideRow");
+    const navigatorPanel = document.getElementById("navigator");
+    const navList = document.getElementById("navList");
+    const overview = document.getElementById("overview");
+    const copyButton = document.getElementById("copyButton");
+    const downloadButton = document.getElementById("downloadButton");
+    const undoButton = document.getElementById("undoButton");
+    const resetButton = document.getElementById("resetButton");
+    const chunkCount = document.getElementById("chunkCount");
+    const sourceName = document.getElementById("sourceName");
+    const maxWords = document.getElementById("maxWords");
+    const statusPill = document.getElementById("statusPill");
+
+    copyButton.addEventListener("click", copyPlan);
+    downloadButton.addEventListener("click", downloadPlan);
+    undoButton.addEventListener("click", undoLastChange);
+    resetButton.addEventListener("click", resetPlan);
+    main.addEventListener("scroll", scheduleActiveNavUpdate);
+
+    loadEmbeddedPreview();
+
+    function loadEmbeddedPreview() {
+      try {
+        const raw = document.getElementById("previewData").textContent.trim();
+        if (!raw || raw.startsWith("__")) {
+          throw new Error("此文件是预览模板，请通过 chunk.py preview 生成任务专用 HTML。");
+        }
+        const data = JSON.parse(raw);
+        if (data.version !== 1) throw new Error("不支持的预览版本：" + (data.version || "未知"));
+
+        segments = data.segments || [];
+        chunks = (data.chunks || []).map((segmentIds, index) => ({
+          id: chunkIdFromIndex(index),
+          segment_ids: [...segmentIds]
+        }));
+        originalChunks = cloneChunks(chunks);
+        history = [];
+        sourceNameValue = data.source_name || "";
+        sourceSha256 = data.source_sha256 || "";
+        splitter = data.splitter || "";
+        maxWordsValue = data.max_words || 0;
+        render();
+      } catch (err) {
+        editor.innerHTML = "";
+        navList.innerHTML = "";
+        guideRow.hidden = true;
+        navigatorPanel.hidden = true;
+        notice.className = "notice warn";
+        notice.textContent = "加载失败：" + err.message;
+        updateHeader(false);
+      }
+    }
+
+    function render() {
+      editor.innerHTML = "";
+
+      if (segments.length === 0 || chunks.length === 0) {
+        notice.className = "notice warn";
+        notice.textContent = "没有可预览的分片。";
+        guideRow.hidden = true;
+        navigatorPanel.hidden = true;
+        updateHeader(false);
+        return;
+      }
+
+      guideRow.hidden = false;
+      navigatorPanel.hidden = false;
+      let globalIndex = 1;
+
+      chunks.forEach((chunk, chunkIndex) => {
+        const chunkElement = document.createElement("article");
+        chunkElement.className = "chunk";
+        chunkElement.dataset.chunkId = chunk.id;
+
+        const words = wordsOf(chunk);
+        const firstId = chunk.segment_ids[0];
+        const lastId = chunk.segment_ids[chunk.segment_ids.length - 1];
+        const badgeClass = maxWordsValue && words > maxWordsValue ? "badge warn" : "badge";
+        const badgeText = maxWordsValue && words > maxWordsValue ? "超过建议" : "正常";
+
+        chunkElement.appendChild(elementFromHtml(`
+          <div class="chunk-header">
+            <div class="chunk-label"><strong>${escapeHtml(chunk.id)}</strong></div>
+            <div class="chunk-stats">
+              <span>${escapeHtml(firstId)}–${escapeHtml(lastId)} · 约 ${words} 词</span>
+              <span class="${badgeClass}">${badgeText}</span>
+            </div>
+          </div>
+        `));
+
+        renderChunkBody(chunkElement, chunk, chunkIndex, globalIndex);
+        globalIndex += chunk.segment_ids.length;
+        editor.appendChild(chunkElement);
+
+        if (chunkIndex < chunks.length - 1) {
+          const divider = elementFromHtml(`
+            <div class="merge-divider" title="消除边界，合并上下两个分片" role="button" tabindex="0">
+              <div class="merge-button">合并相邻分片</div>
+            </div>
+          `);
+          divider.addEventListener("click", () => mergeChunks(chunkIndex));
+          divider.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              mergeChunks(chunkIndex);
+            }
+          });
+          editor.appendChild(divider);
+        }
+      });
+
+      updateNotice();
+      buildNavigator();
+      updateHeader(true);
+      updateActiveNav();
+    }
+
+    function renderChunkBody(chunkElement, chunk, chunkIndex, globalStartIndex) {
+      const isExpanded = expandedChunks.has(chunk.id);
+      const shouldCollapse = chunk.segment_ids.length > collapseThreshold && !isExpanded;
+      const visibleIndexes = visibleSegmentIndexes(chunk, shouldCollapse);
+      let cursor = 0;
+
+      visibleIndexes.forEach((segmentIndex) => {
+        if (segmentIndex > cursor) {
+          chunkElement.appendChild(renderFoldRow(chunk.id, segmentIndex - cursor));
+        }
+        chunkElement.appendChild(renderParagraphRow(chunkIndex, segmentIndex, globalStartIndex + segmentIndex));
+        cursor = segmentIndex + 1;
+      });
+
+      if (cursor < chunk.segment_ids.length) {
+        chunkElement.appendChild(renderFoldRow(chunk.id, chunk.segment_ids.length - cursor));
+      }
+    }
+
+    function visibleSegmentIndexes(chunk, shouldCollapse) {
+      if (!shouldCollapse) return chunk.segment_ids.map((_, index) => index);
+      const visible = new Set([0, chunk.segment_ids.length - 1]);
+      chunk.segment_ids.forEach((segmentId, index) => {
+        const segment = getSegment(segmentId);
+        if (index > 0 && index < chunk.segment_ids.length - 1 && segment?.kind === "heading") {
+          visible.add(index);
+        }
+      });
+      return [...visible].sort((a, b) => a - b);
+    }
+
+    function renderFoldRow(chunkId, hiddenCount) {
+      const fold = elementFromHtml(`
+        <div class="fold-row" title="点击展开隐藏段落" role="button" tabindex="0">
+          <div class="fold-gutter">···</div>
+          <div class="fold-content">展开隐藏的 ${hiddenCount} 个中间段落</div>
+        </div>
+      `);
+      const expand = () => {
+        expandedChunks.add(chunkId);
+        render();
+      };
+      fold.addEventListener("click", expand);
+      fold.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          expand();
+        }
+      });
+      return fold;
+    }
+
+    function renderParagraphRow(chunkIndex, segmentIndex, globalIndex) {
+      const chunk = chunks[chunkIndex];
+      const segmentId = chunk.segment_ids[segmentIndex];
+      const segment = getSegment(segmentId);
+      const kind = segment?.kind || "flow";
+      const row = document.createElement("div");
+      row.className = `para-row kind-${kind} ${headingLevelClass(segment)}`.trim();
+
+      const gutter = document.createElement("div");
+      gutter.className = "gutter";
+      gutter.textContent = globalIndex;
+      row.appendChild(gutter);
+
+      const content = document.createElement("div");
+      content.className = "content";
+      content.textContent = segment ? segment.text : "";
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      if (segmentIndex === 0 && chunkIndex > 0) {
+        actions.appendChild(createAction("并入上一片", "primary", () => moveToPreviousChunk(chunkIndex)));
+      }
+      if (segmentIndex === chunk.segment_ids.length - 1 && chunkIndex < chunks.length - 1) {
+        actions.appendChild(createAction("并入下一片", "primary", () => moveToNextChunk(chunkIndex)));
+      }
+      if (segmentIndex > 0) {
+        actions.appendChild(createAction("从此拆分", "", () => splitChunk(chunkIndex, segmentIndex)));
+      }
+
+      if (actions.children.length > 0) content.appendChild(actions);
+      row.appendChild(content);
+      return row;
+    }
+
+    function createAction(label, variant, onClick) {
+      const button = document.createElement("button");
+      button.className = `small-action ${variant}`;
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        onClick();
+      });
+      return button;
+    }
+
+    function moveToPreviousChunk(chunkIndex) {
+      const current = chunks[chunkIndex];
+      const previous = chunks[chunkIndex - 1];
+      if (!current || !previous || current.segment_ids.length === 0) return;
+      saveHistory();
+      previous.segment_ids.push(current.segment_ids.shift());
+      removeEmptyChunk(chunkIndex);
+      renumberChunks();
+      render();
+      showToast("已并入上一片");
+    }
+
+    function moveToNextChunk(chunkIndex) {
+      const current = chunks[chunkIndex];
+      const next = chunks[chunkIndex + 1];
+      if (!current || !next || current.segment_ids.length === 0) return;
+      saveHistory();
+      next.segment_ids.unshift(current.segment_ids.pop());
+      removeEmptyChunk(chunkIndex);
+      renumberChunks();
+      render();
+      showToast("已并入下一片");
+    }
+
+    function splitChunk(chunkIndex, segmentIndex) {
+      const chunk = chunks[chunkIndex];
+      if (!chunk || segmentIndex <= 0 || segmentIndex >= chunk.segment_ids.length) return;
+      saveHistory();
+      const newSegmentIds = chunk.segment_ids.splice(segmentIndex);
+      chunks.splice(chunkIndex + 1, 0, { id: "", segment_ids: newSegmentIds });
+      expandedChunks.delete(chunk.id);
+      renumberChunks();
+      render();
+      showToast("已拆分为新分片");
+    }
+
+    function mergeChunks(chunkIndex) {
+      const current = chunks[chunkIndex];
+      const next = chunks[chunkIndex + 1];
+      if (!current || !next) return;
+      saveHistory();
+      current.segment_ids.push(...next.segment_ids);
+      if (expandedChunks.has(next.id)) expandedChunks.add(current.id);
+      expandedChunks.delete(next.id);
+      chunks.splice(chunkIndex + 1, 1);
+      renumberChunks();
+      render();
+      showToast("相邻分片已合并");
+    }
+
+    function removeEmptyChunk(chunkIndex) {
+      if (chunks[chunkIndex]?.segment_ids.length === 0) {
+        expandedChunks.delete(chunks[chunkIndex].id);
+        chunks.splice(chunkIndex, 1);
+      }
+    }
+
+    function undoLastChange() {
+      if (history.length === 0) return;
+      chunks = history.pop();
+      renumberChunks();
+      render();
+      showToast("已撤销上一步");
+    }
+
+    function resetPlan() {
+      if (!isModified()) return;
+      saveHistory();
+      chunks = cloneChunks(originalChunks);
+      expandedChunks.clear();
+      render();
+      showToast("已恢复默认分片");
+    }
+
+    function saveHistory() {
+      const snapshot = cloneChunks(chunks);
+      const last = history[history.length - 1];
+      if (last && serializeChunks(last) === serializeChunks(snapshot)) return;
+      history.push(snapshot);
+      if (history.length > maxHistory) history.shift();
+    }
+
+    function renumberChunks() {
+      chunks.forEach((chunk, index) => { chunk.id = chunkIdFromIndex(index); });
+    }
+
+    function buildNavigator() {
+      navList.innerHTML = "";
+      const fragment = document.createDocumentFragment();
+      chunks.forEach((chunk) => {
+        const words = wordsOf(chunk);
+        const button = document.createElement("button");
+        button.className = "nav-item";
+        button.type = "button";
+        button.dataset.chunkId = chunk.id;
+        button.innerHTML = `
+          <span class="nav-item-title">${escapeHtml(chunk.id)}</span>
+          <span class="nav-dot${maxWordsValue && words > maxWordsValue ? " warn" : ""}"></span>
+          <span class="nav-item-meta">约 ${words} 词 · ${chunk.segment_ids.length} 段</span>
+        `;
+        button.addEventListener("click", () => {
+          const target = editor.querySelector(`[data-chunk-id="${chunk.id}"]`);
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        fragment.appendChild(button);
+      });
+      navList.appendChild(fragment);
+    }
+
+    function scheduleActiveNavUpdate() {
+      if (pendingScrollFrame) return;
+      pendingScrollFrame = true;
+      requestAnimationFrame(() => {
+        pendingScrollFrame = false;
+        updateActiveNav();
+      });
+    }
+
+    function updateActiveNav() {
+      if (!chunks.length) return;
+      const mainRect = main.getBoundingClientRect();
+      let activeId = chunks[0].id;
+      editor.querySelectorAll(".chunk").forEach((chunkElement) => {
+        const top = chunkElement.getBoundingClientRect().top - mainRect.top;
+        if (top <= 120) activeId = chunkElement.dataset.chunkId;
+      });
+      navList.querySelectorAll(".nav-item").forEach((button) => {
+        button.classList.toggle("active", button.dataset.chunkId === activeId);
+      });
+    }
+
+    function updateNotice() {
+      const modified = isModified();
+      const oversized = chunks.filter((chunk) => maxWordsValue && wordsOf(chunk) > maxWordsValue).length;
+      notice.className = oversized ? "notice warn" : "notice";
+      const firstSentence = modified
+        ? "已检测到边界调整。复制调整方案并粘贴回对话后，Agent 会按当前方案生成 chunks。"
+        : "当前仍是默认分片。若边界合理，直接回到对话确认即可，不需要复制方案。";
+      const warning = oversized ? ` 有 ${oversized} 个分片超过建议上限，请确认这是有意保留。` : "";
+      notice.innerHTML = `<strong>${firstSentence}</strong>${warning}`;
+    }
+
+    function updateHeader(hasData) {
+      const modified = hasData && isModified();
+      const oversized = hasData ? chunks.filter((chunk) => maxWordsValue && wordsOf(chunk) > maxWordsValue).length : 0;
+      chunkCount.textContent = hasData ? chunks.length : "--";
+      sourceName.textContent = hasData && sourceNameValue ? sourceNameValue : "--";
+      maxWords.textContent = hasData && maxWordsValue ? maxWordsValue : "--";
+      overview.textContent = hasData ? `${chunks.length} 片${oversized ? ` · ${oversized} 超限` : ""}` : "--";
+      statusPill.textContent = !hasData ? "未加载" : modified ? "已调整" : "默认方案";
+      statusPill.className = modified ? "status-pill changed" : "status-pill";
+      copyButton.disabled = !hasData || !modified;
+      downloadButton.disabled = !hasData || !modified;
+      undoButton.disabled = !hasData || history.length === 0;
+      resetButton.disabled = !hasData || !modified;
+      copyButton.textContent = modified ? "复制调整方案" : "无需复制";
+      copyButton.title = modified ? "复制当前调整方案并粘贴回 Agent" : "没有调整时无需复制，直接回到对话确认即可";
+      downloadButton.title = modified ? "下载当前调整方案" : "没有调整时无需下载方案";
+    }
+
+    function buildCompactPlan() {
+      return {
+        version: 1,
+        source_name: sourceNameValue,
+        source_sha256: sourceSha256,
+        splitter: splitter,
+        max_words: maxWordsValue,
+        chunks: chunks.map((chunk) => [...chunk.segment_ids])
+      };
+    }
+
+    async function copyPlan() {
+      if (!isModified()) return;
+      const text = JSON.stringify(buildCompactPlan(), null, 2);
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          fallbackCopy(text);
+        }
+        showToast("调整方案已复制");
+      } catch (err) {
+        showToast("复制失败，请使用下载方案", "error");
+      }
+    }
+
+    function fallbackCopy(text) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (!ok) throw new Error("copy command failed");
+    }
+
+    function downloadPlan() {
+      if (!isModified()) return;
+      const json = JSON.stringify(buildCompactPlan(), null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${planBasename()}.chunk-plan.adjusted.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("调整方案已下载");
+    }
+
+    let toastTimer;
+    function showToast(message, type = "success") {
+      const toast = document.getElementById("toast");
+      const toastText = document.getElementById("toastText");
+      const toastIcon = document.getElementById("toastIcon");
+      toastText.textContent = message;
+      toastIcon.className = type === "success" ? "toast-icon" : "toast-icon error";
+      toastIcon.textContent = type === "success" ? "●" : "!";
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), type === "error" ? 3600 : 1900);
+    }
+
+    function wordsOf(chunk) {
+      return chunk.segment_ids.reduce((sum, segmentId) => {
+        const segment = getSegment(segmentId);
+        return sum + (segment ? segment.words : 0);
+      }, 0);
+    }
+
+    function getSegment(id) {
+      return segments.find((segment) => segment.id === id);
+    }
+
+    function cloneChunks(source) {
+      return source.map((chunk) => ({ id: chunk.id, segment_ids: [...chunk.segment_ids] }));
+    }
+
+    function serializeChunks(source) {
+      return JSON.stringify(source.map((chunk) => chunk.segment_ids));
+    }
+
+    function isModified() {
+      return serializeChunks(chunks) !== serializeChunks(originalChunks);
+    }
+
+    function headingLevelClass(segment) {
+      const match = segment?.text?.match(/^(#{1,6})\s/);
+      return match ? `level-${match[1].length}` : "";
+    }
+
+    function chunkIdFromIndex(index) {
+      return `chunk-${String(index + 1).padStart(2, "0")}`;
+    }
+
+    function planBasename() {
+      const stem = (sourceNameValue || "chunk").replace(/\.[^.]+$/, "");
+      return stem.replace(/[^a-zA-Z0-9._-]+/g, "-") || "chunk";
+    }
+
+    function elementFromHtml(html) {
+      const template = document.createElement("template");
+      template.innerHTML = html.trim();
+      return template.content.firstElementChild;
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
+    }
+  </script>
+</body>
+</html>

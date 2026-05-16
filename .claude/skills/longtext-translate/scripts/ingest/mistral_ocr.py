@@ -2,28 +2,28 @@
 """
 Mistral OCR - High-quality PDF/Image text extraction using Mistral AI's OCR API.
 
-This script provides comprehensive OCR capabilities using Mistral's document AI,
-supporting PDF documents and images with advanced features like table extraction,
-header/footer detection, and structured output.
+Use this script when local text extraction is poor, the PDF is scanned, or the
+page contains complex tables and layout.
 
 Requirements:
     pip install mistralai
 
-Environment:
-    MISTRAL_API_KEY: Your Mistral API key (required)
+API Key:
+    The script loads MISTRAL_API_KEY from environment variable first,
+    then falls back to ~/.config/longtext-translate/.env (platform-adaptive).
+
+    First-time setup:
+        python mistral_ocr.py --setup
 
 Usage:
-    # Basic usage - extract text from PDF
+    # Extract text from PDF
     python mistral_ocr.py document.pdf
 
     # Extract with table formatting as markdown
     python mistral_ocr.py document.pdf --table-format markdown
 
-    # Extract with table formatting as HTML
-    python mistral_ocr.py document.pdf --table-format html
-
-    # Include base64 encoded images in output
-    python mistral_ocr.py document.pdf --include-images
+    # Include embedded images in the JSON response
+    python mistral_ocr.py document.pdf --include-images --json
 
     # Extract headers and footers (OCR 2512+)
     python mistral_ocr.py document.pdf --extract-headers --extract-footers
@@ -31,14 +31,8 @@ Usage:
     # Save output to file
     python mistral_ocr.py document.pdf -o output.md
 
-    # Process from URL
-    python mistral_ocr.py --url https://example.com/document.pdf
-
-    # Process an image
-    python mistral_ocr.py image.png
-
-    # Output as JSON (full API response)
-    python mistral_ocr.py document.pdf --json
+    # Process a page image or scan
+    python mistral_ocr.py page.png
 """
 
 import argparse
@@ -47,11 +41,84 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+
+
+# --- Configuration management ---
+
+
+def get_config_dir() -> Path:
+    """Return platform-adaptive config directory."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        return Path(base) / "longtext-translate"
+    return Path.home() / ".config" / "longtext-translate"
+
+
+def load_env_file(env_path: Path) -> dict:
+    """Parse a .env file safely without shell execution."""
+    if not env_path.exists():
+        return {}
+    result = {}
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2:
+                if (value.startswith('"') and value.endswith('"')) or \
+                   (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+            result[key] = value
+    return result
+
+
+def get_api_key() -> str | None:
+    """Get API key from environment or .env file. Never prints the key."""
+    key = os.environ.get("MISTRAL_API_KEY")
+    if key:
+        return key
+    env_path = get_config_dir() / ".env"
+    env_vars = load_env_file(env_path)
+    return env_vars.get("MISTRAL_API_KEY")
+
+
+def setup_config() -> Path:
+    """Create config directory and .env template. Returns path to .env file."""
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env_path = config_dir / ".env"
+    if not env_path.exists():
+        env_path.write_text("# LongText-Translate Configuration\nMISTRAL_API_KEY=\n")
+    return env_path
+
+
+def validate_api_key(client) -> None:
+    """Validate API key with a lightweight API call. Exits on auth failure."""
+    try:
+        client.models.list()
+    except Exception as e:
+        error_msg = str(e)
+        if any(kw in error_msg for kw in ["401", "403", "Unauthorized", "Forbidden"]):
+            env_path = get_config_dir() / ".env"
+            print(
+                f"API key validation failed: authentication error.\n"
+                f"Please check your key in {env_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Warning: could not validate API key ({e}). Proceeding anyway.",
+            file=sys.stderr,
+        )
 
 
 def get_client():
-    """Initialize Mistral client with API key from environment."""
+    """Initialize Mistral client with API key from environment or .env file."""
     try:
         from mistralai import Mistral
     except ImportError:
@@ -59,10 +126,15 @@ def get_client():
         print("Install with: pip install mistralai", file=sys.stderr)
         sys.exit(1)
 
-    api_key = os.environ.get("MISTRAL_API_KEY")
+    api_key = get_api_key()
     if not api_key:
-        print("Error: MISTRAL_API_KEY environment variable not set.", file=sys.stderr)
-        print("Set it with: export MISTRAL_API_KEY='your-api-key'", file=sys.stderr)
+        env_path = get_config_dir() / ".env"
+        print(
+            "MISTRAL_API_KEY not configured.\n"
+            "Run with --setup to create a config template,\n"
+            f"or set your key in {env_path}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     return Mistral(api_key=api_key)
@@ -85,8 +157,6 @@ def get_mime_type(file_path: str) -> str:
         ".gif": "image/gif",
         ".webp": "image/webp",
         ".avif": "image/avif",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
     return mime_types.get(ext, "application/octet-stream")
 
@@ -99,58 +169,27 @@ def is_image_file(file_path: str) -> bool:
 
 def process_document(
     client,
-    file_path: Optional[str] = None,
-    url: Optional[str] = None,
-    table_format: Optional[str] = None,
+    file_path: str,
+    table_format: str | None = None,
     include_image_base64: bool = False,
     extract_header: bool = False,
     extract_footer: bool = False,
 ) -> dict:
-    """
-    Process a document using Mistral OCR.
+    """Process a local PDF or image using Mistral OCR."""
+    base64_data = file_to_base64(file_path)
+    mime_type = get_mime_type(file_path)
 
-    Args:
-        client: Mistral client instance
-        file_path: Path to local file (PDF or image)
-        url: URL to document
-        table_format: Format for tables - None, "markdown", or "html"
-        include_image_base64: Include base64 encoded images in response
-        extract_header: Extract headers (OCR 2512+)
-        extract_footer: Extract footers (OCR 2512+)
-
-    Returns:
-        OCR response as dictionary
-    """
-    # Build document parameter
-    if url:
-        if is_image_file(url):
-            document = {
-                "type": "image_url",
-                "image_url": url
-            }
-        else:
-            document = {
-                "type": "document_url",
-                "document_url": url
-            }
-    elif file_path:
-        base64_data = file_to_base64(file_path)
-        mime_type = get_mime_type(file_path)
-
-        if is_image_file(file_path):
-            document = {
-                "type": "image_url",
-                "image_url": f"data:{mime_type};base64,{base64_data}"
-            }
-        else:
-            document = {
-                "type": "document_url",
-                "document_url": f"data:{mime_type};base64,{base64_data}"
-            }
+    if is_image_file(file_path):
+        document = {
+            "type": "image_url",
+            "image_url": f"data:{mime_type};base64,{base64_data}"
+        }
     else:
-        raise ValueError("Either file_path or url must be provided")
+        document = {
+            "type": "document_url",
+            "document_url": f"data:{mime_type};base64,{base64_data}"
+        }
 
-    # Build OCR request parameters
     ocr_params = {
         "model": "mistral-ocr-latest",
         "document": document,
@@ -232,10 +271,6 @@ def main():
         help="Path to PDF or image file"
     )
     parser.add_argument(
-        "--url",
-        help="URL to document (alternative to local file)"
-    )
-    parser.add_argument(
         "--table-format",
         choices=["markdown", "html"],
         help="Format for extracted tables"
@@ -264,26 +299,42 @@ def main():
         action="store_true",
         help="Output full JSON response instead of markdown"
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Create config template and exit"
+    )
 
     args = parser.parse_args()
 
-    # Validate input
-    if not args.file and not args.url:
-        parser.error("Either FILE or --url must be provided")
+    if args.setup:
+        env_path = setup_config()
+        print(f"Configuration template created at: {env_path}")
+        print("Please open this file and fill in your MISTRAL_API_KEY.")
+        if os.name == "nt":
+            print(f"You can use: notepad {env_path}")
+        else:
+            print(f"You can use: open -e {env_path}")
+        return
 
-    if args.file and not os.path.exists(args.file):
+    if not args.file:
+        parser.error("FILE is required")
+
+    if not os.path.exists(args.file):
         print(f"Error: File not found: {args.file}", file=sys.stderr)
         sys.exit(1)
 
     # Initialize client
     client = get_client()
 
+    # Validate API key before uploading file
+    validate_api_key(client)
+
     # Process document
     try:
         response = process_document(
             client=client,
             file_path=args.file,
-            url=args.url,
             table_format=args.table_format,
             include_image_base64=args.include_images,
             extract_header=args.extract_headers,

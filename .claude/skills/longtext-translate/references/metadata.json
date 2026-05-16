@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "description": "普通翻译与长文本分片之间的待翻译内容规模建议区间。低于 safeBelow 时采用普通翻译模式，高于 chunkAbove 时采用长文本翻译模式，处在中间区时结合文本结构和质量要求判断。",
+  "fallback": {
+    "safeBelow": 4000,
+    "chunkAbove": 7000
+  },
+  "models": {
+    "gpt-5.5*": {
+      "safeBelow": 5000,
+      "chunkAbove": 9000
+    },
+    "deepseek-v4-flash": {
+      "safeBelow": 4000,
+      "chunkAbove": 7000
+    }
+  }
+}
