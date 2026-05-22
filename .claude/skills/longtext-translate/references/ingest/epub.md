@@ -26,13 +26,15 @@ Markdown 中图片使用本地相对路径：`![](images/example.jpg)`
 
 ## 使用提取脚本
 
-优先使用 `{baseDir}/scripts/ingest/epub.py`。`{baseDir}` 为此 SKILL.md 所在目录路径。
+优先使用 `{baseDir}/scripts/ingest/epub.py`。`{baseDir}` 为此 `SKILL.md` 所在目录路径。
 
 ### 列出 spine
 
 ```bash
 python3 {baseDir}/scripts/ingest/epub.py path/to/book.epub --list-spine
 ```
+
+输出左侧的序号就是后续 `--spine-start` 和 `--spine-end` 使用的 spine 序号，从 0 开始计数。
 
 ### 按 href 指定章节
 
@@ -55,7 +57,7 @@ python3 {baseDir}/scripts/ingest/epub.py \
   --output path/to/output/selection.md
 ```
 
-`--spine-end` 是闭区间。执行前仍应人工确认边界是否正好落在目标章节。
+`--spine-start` 和 `--spine-end` 都是闭区间，且以 `--list-spine` 输出的 0-based 序号为准。执行前仍应人工确认边界是否正好落在目标章节。
 
 ## 清理原则
 
@@ -84,4 +86,4 @@ python3 {baseDir}/scripts/ingest/epub.py \
 - 是否有残留 HTML 标签
 - 是否按用户确认的章节边界截断
 
-若校验发现边界可疑，不要自行"修正"成看似合理的范围；先说明观察到的内容（例如"最后一页已经进入 Chapter 4 封面"），再请用户确认。
+若校验发现边界可疑，不要自行修正成看似合理的范围；先说明观察到的内容，例如“最后一页已经进入 Chapter 4 封面”，再请用户确认。

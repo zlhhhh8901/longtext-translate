@@ -32,6 +32,7 @@ class Block:
     kind: str
     md: str
     words: int
+    heading_level: int | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class Segment:
     kind: str
     md: str
     words: int
+    heading_level: int | None = None
 
 
 @dataclass
@@ -191,7 +193,7 @@ def materialize_chunks(
         "output_dir": str(chunk_dir),
         "frontmatter": bool(model.frontmatter),
         "plan": plan_source,
-        "words_per_chunk": chunk_word_counts(model.segments, chunks),
+        "chunk_index": build_chunk_index(model.segments, chunks),
     }
 
 
@@ -447,7 +449,7 @@ def parse_markdown(content: str) -> list[Block]:
         if not md:
             continue
 
-        blocks.append(make_block(token_type_to_block_kind(token.type), md))
+        blocks.append(make_block(token_type_to_block_kind(token.type), md, heading_level=heading_level_for_token(token.type, md)))
 
     if not blocks:
         body = trim_boundary_blank_lines(content)
@@ -469,9 +471,16 @@ def token_type_to_block_kind(token_type: str) -> str:
     return "flow"
 
 
-def make_block(kind: str, md: str) -> Block:
+def heading_level_for_token(token_type: str, md: str) -> int | None:
+    if token_type != "heading_open":
+        return None
+    match = re.match(r"^(#{1,6})\s+", md)
+    return len(match.group(1)) if match else None
+
+
+def make_block(kind: str, md: str, heading_level: int | None = None) -> Block:
     trimmed = trim_boundary_blank_lines(md)
-    return Block(kind=kind, md=trimmed, words=count_words(trimmed))
+    return Block(kind=kind, md=trimmed, words=count_words(trimmed), heading_level=heading_level)
 
 
 def build_segments(blocks: list[Block], max_words_per_chunk: int) -> list[Segment]:
@@ -484,6 +493,7 @@ def build_segments(blocks: list[Block], max_words_per_chunk: int) -> list[Segmen
                     kind=split_block.kind,
                     md=split_block.md,
                     words=split_block.words,
+                    heading_level=split_block.heading_level,
                 )
             )
     return segments
@@ -570,9 +580,44 @@ def split_oversized_block(block: Block, max_words_per_chunk: int) -> list[Block]
     return split_blocks
 
 
-def chunk_word_counts(segments: list[Segment], chunks: list[list[str]]) -> list[int]:
-    word_map = {segment.id: segment.words for segment in segments}
-    return [sum(word_map[segment_id] for segment_id in chunk) for chunk in chunks]
+def build_chunk_index(segments: list[Segment], chunks: list[list[str]]) -> list[dict[str, object]]:
+    segment_map = {segment.id: segment for segment in segments}
+    starts_at = chunk_start_paths(segments, chunks)
+    index: list[dict[str, object]] = []
+    for chunk_number, chunk in enumerate(chunks, 1):
+        item: dict[str, object] = {
+            "id": f"chunk-{chunk_number:02d}",
+            "words": sum(segment_map[segment_id].words for segment_id in chunk),
+        }
+        if starts_at[chunk_number - 1]:
+            item["starts_at"] = starts_at[chunk_number - 1]
+        index.append(item)
+    return index
+
+
+def chunk_start_paths(segments: list[Segment], chunks: list[list[str]]) -> list[str | None]:
+    chunk_start_ids = {chunk[0] for chunk in chunks if chunk}
+    starts_at_by_id: dict[str, str | None] = {}
+    heading_stack: list[tuple[int, str]] = []
+
+    for segment in segments:
+        if segment.kind == "heading" and segment.heading_level is not None:
+            heading_stack = [(level, text) for level, text in heading_stack if level < segment.heading_level]
+            heading_stack.append((segment.heading_level, heading_text(segment.md)))
+        if segment.id in chunk_start_ids:
+            starts_at_by_id[segment.id] = format_heading_path(heading_stack)
+
+    return [starts_at_by_id.get(chunk[0]) if chunk else None for chunk in chunks]
+
+
+def heading_text(md: str) -> str:
+    return re.sub(r"^#{1,6}\s+", "", md).strip()
+
+
+def format_heading_path(heading_stack: list[tuple[int, str]]) -> str | None:
+    if not heading_stack:
+        return None
+    return " > ".join(text for _, text in heading_stack[-2:] if text)
 
 
 def sha256_text(text: str) -> str:
