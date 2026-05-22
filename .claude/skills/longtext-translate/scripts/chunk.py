@@ -3,9 +3,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.server
 import json
 import re
+import socket
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -15,6 +21,10 @@ from markdown_it import MarkdownIt
 
 PLAN_VERSION = 1
 SPLITTER_VERSION = "markdown-block-v1"
+PLAN_FILE_NAME = "chunk-plan.json"
+PREVIEW_FILE_NAME = "chunk-preview.html"
+PREVIEW_HOST = "127.0.0.1"
+PREVIEW_IDLE_TIMEOUT_SECONDS = 15 * 60
 
 
 @dataclass
@@ -47,29 +57,38 @@ parser = MarkdownIt("js-default", {"html": True})
 
 def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    commands = {"preview", "materialize"}
+    commands = {"preview", "materialize", "serve-preview"}
     if argv and argv[0] not in commands and argv[0] not in {"-h", "--help"}:
         argv = ["materialize", *argv]
 
     ap = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).name,
-        usage="%(prog)s {preview,materialize} <file> [options]",
+        usage="%(prog)s {preview,materialize,serve-preview} <file> [options]",
     )
     subparsers = ap.add_subparsers(dest="command", required=True)
 
-    preview = subparsers.add_parser("preview", help="Generate a self-contained chunk preview HTML")
+    preview = subparsers.add_parser("preview", help="Generate a chunk preview HTML and local confirmation server")
     add_common_args(preview)
+    preview.add_argument("--no-server", action="store_true", help="Only write chunk-preview.html without starting the local server")
 
     materialize = subparsers.add_parser("materialize", help="Write final chunk files")
     add_common_args(materialize)
-    materialize.add_argument("--plan-json", default=None, help="Adjusted compact plan JSON copied from the preview HTML")
-    materialize.add_argument("--plan-file", default=None, metavar="FILE", help="Adjusted compact plan JSON file")
+    materialize.add_argument("--plan-json", default=None, help="Explicit compact plan JSON")
+    materialize.add_argument("--plan-file", default=None, metavar="FILE", help="Explicit compact plan JSON file")
+
+    serve_preview_parser = subparsers.add_parser("serve-preview", help=argparse.SUPPRESS)
+    serve_preview_parser.add_argument("--output-dir", required=True)
+    serve_preview_parser.add_argument("--host", default=PREVIEW_HOST)
+    serve_preview_parser.add_argument("--port", type=parse_positive_int, required=True)
+    serve_preview_parser.add_argument("--idle-timeout", type=parse_positive_int, default=PREVIEW_IDLE_TIMEOUT_SECONDS)
 
     args = ap.parse_args(argv)
 
     try:
         if args.command == "preview":
-            result = create_preview(args.file, args.max_words, args.output_dir)
+            result = create_preview(args.file, args.max_words, args.output_dir, start_server=not args.no_server)
+        elif args.command == "serve-preview":
+            result = serve_preview(output_dir=args.output_dir, host=args.host, port=args.port, idle_timeout=args.idle_timeout)
         else:
             if args.plan_json and args.plan_file:
                 ap.error("--plan-json and --plan-file are mutually exclusive")
@@ -104,18 +123,20 @@ def parse_positive_int(value: str) -> int:
     return parsed
 
 
-def create_preview(file: str, max_words: int = 5000, output_dir: str = "") -> dict[str, object]:
+def create_preview(file: str, max_words: int = 5000, output_dir: str = "", start_server: bool = True) -> dict[str, object]:
     model = build_source_model(file, max_words)
     output_root = resolve_output_root(model.source, output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    preview_path = output_root / "chunk-preview.html"
+    preview_path = output_root / PREVIEW_FILE_NAME
     data = {
         "version": PLAN_VERSION,
         "source_name": model.source.name,
         "source_sha256": model.source_sha256,
         "splitter": SPLITTER_VERSION,
         "max_words": model.max_words,
+        "confirm_endpoint": "/chunk-plan",
+        "plan_file": PLAN_FILE_NAME,
         "segments": [
             {"id": segment.id, "kind": segment.kind, "words": segment.words, "text": segment.md}
             for segment in model.segments
@@ -133,12 +154,13 @@ def create_preview(file: str, max_words: int = 5000, output_dir: str = "") -> di
         encoding="utf-8",
     )
 
-    return {
+    result: dict[str, object] = {
         "source": file,
         "preview_file": str(preview_path),
-        "chunks": len(model.chunks),
-        "words_per_chunk": chunk_word_counts(model.segments, model.chunks),
     }
+    if start_server:
+        result.update(start_preview_server(output_root))
+    return result
 
 
 def materialize_chunks(
@@ -148,10 +170,18 @@ def materialize_chunks(
     plan_json: str | None = None,
     plan_file: str | None = None,
 ) -> dict[str, object]:
+    source = Path(file)
+    output_root = resolve_output_root(source, output_dir)
     plan = read_adjusted_plan(plan_json=plan_json, plan_file=plan_file)
+    plan_source = "explicit" if plan else "default"
+    if plan is None:
+        confirmed_plan = output_root / PLAN_FILE_NAME
+        if confirmed_plan.exists():
+            plan = read_adjusted_plan(plan_json=None, plan_file=str(confirmed_plan))
+            plan_source = PLAN_FILE_NAME
+
     effective_max_words = int(plan.get("max_words", max_words)) if plan else max_words
     model = build_source_model(file, effective_max_words)
-    output_root = resolve_output_root(model.source, output_dir)
     chunks = validate_plan(plan, model) if plan else model.chunks
     chunk_dir = write_chunk_files(model, chunks, output_root)
 
@@ -160,8 +190,118 @@ def materialize_chunks(
         "chunks": len(chunks),
         "output_dir": str(chunk_dir),
         "frontmatter": bool(model.frontmatter),
+        "plan": plan_source,
         "words_per_chunk": chunk_word_counts(model.segments, chunks),
     }
+
+
+def start_preview_server(output_root: Path) -> dict[str, object]:
+    port = find_free_port(PREVIEW_HOST)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "serve-preview",
+        "--output-dir",
+        str(output_root),
+        "--host",
+        PREVIEW_HOST,
+        "--port",
+        str(port),
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    url = f"http://localhost:{port}/"
+    wait_for_server(url)
+    return {"preview_url": url}
+
+
+def find_free_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
+def wait_for_server(url: str) -> None:
+    deadline = time.time() + 5
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=0.5):
+                return
+        except (OSError, urllib.error.URLError) as error:
+            last_error = error
+            time.sleep(0.05)
+    raise RuntimeError(f"Preview server did not start: {last_error}")
+
+
+def serve_preview(output_dir: str, host: str, port: int, idle_timeout: int) -> dict[str, object]:
+    output_root = Path(output_dir)
+    preview_path = output_root / PREVIEW_FILE_NAME
+    if not preview_path.exists():
+        raise ValueError(f"Preview file not found: {preview_path}")
+
+    handler = make_preview_handler(output_root)
+    server = http.server.ThreadingHTTPServer((host, port), handler)
+    server.timeout = 1
+    server.last_activity = time.time()  # type: ignore[attr-defined]
+    while time.time() - server.last_activity < idle_timeout:  # type: ignore[attr-defined]
+        server.handle_request()
+    server.server_close()
+    return {"server": "stopped", "reason": "idle timeout"}
+
+
+def make_preview_handler(output_root: Path) -> type[http.server.BaseHTTPRequestHandler]:
+    class PreviewHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.server.last_activity = time.time()  # type: ignore[attr-defined]
+            path = self.path.split("?", 1)[0]
+            if path not in {"/", f"/{PREVIEW_FILE_NAME}"}:
+                self.send_error(404)
+                return
+            html = (output_root / PREVIEW_FILE_NAME).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def do_POST(self) -> None:
+            self.server.last_activity = time.time()  # type: ignore[attr-defined]
+            path = self.path.split("?", 1)[0]
+            if path != "/chunk-plan":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 20 * 1024 * 1024:
+                self.send_json(400, {"ok": False, "error": "Invalid plan size"})
+                return
+            try:
+                plan = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(plan, dict):
+                    raise ValueError("Plan must be a JSON object")
+                plan_path = output_root / PLAN_FILE_NAME
+                plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                self.send_json(200, {"ok": True, "plan_file": str(plan_path)})
+            except Exception as error:
+                self.send_json(400, {"ok": False, "error": str(error)})
+
+        def send_json(self, status: int, payload: dict[str, object]) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    return PreviewHandler
 
 
 def resolve_output_root(source: Path, output_dir: str) -> Path:
