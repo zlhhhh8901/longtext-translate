@@ -1,18 +1,15 @@
 {
-  "schemaVersion": 1,
-  "description": "普通翻译与长文本分片之间的待翻译内容规模建议区间。低于 safeBelow 时采用普通翻译模式，高于 chunkAbove 时采用长文本翻译模式，处在中间区时结合文本结构和质量要求判断。",
+  "schemaVersion": 2,
+  "description": "普通翻译与长文本分片的词数分界线。高于此阈值采用长文本翻译（分片），低于则普通翻译。优先匹配 models 条目；未命中时使用 fallback。",
   "fallback": {
-    "safeBelow": 4000,
-    "chunkAbove": 7000
+    "chunkThreshold": 5000
   },
   "models": {
     "gpt-5.5*": {
-      "safeBelow": 5000,
-      "chunkAbove": 9000
+      "chunkThreshold": 6000
     },
     "deepseek-v4-flash": {
-      "safeBelow": 4000,
-      "chunkAbove": 7000
+      "chunkThreshold": 5000
     }
   }
 }

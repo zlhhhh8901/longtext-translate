@@ -1,28 +1,43 @@
 # EPUB → Markdown 规范化
 
-本文档说明如何将 EPUB 文件中指定章节转换为可供翻译流程使用的干净 Markdown。目标不是完整复刻 EPUB 包装结构，而是得到干净正文：保留章节标题、段落、强调和图片，去掉目录、导航、脚注、封面版权等不属于目标正文的干扰信息。
+本文档说明如何将 EPUB 中的指定内容转换为可供翻译流程使用的干净 Markdown。输出应保留章节标题、正文段落、语义性强调、列表、引用和必要图片，并排除目录、导航、封面、版权页、脚注回链等干扰内容。
 
-## 确认边界
+## 总体流程
 
-开始处理前先把源材料具体化：EPUB 路径、用户要抽取的章节或 spine 范围、输出目录。
+1. 确认 EPUB 路径和用户要翻译的内容范围。
+2. 读取 EPUB spine，定位目标章节或 XHTML 文件。
+3. 确认抽取边界。
+4. 运行提取脚本，生成 Markdown 和本地图片目录。
+5. 检查 Markdown、图片引用、乱码字符和残留 HTML。
+6. 使用规范化后的 Markdown 进入翻译方案确认。
 
-若用户给的是“前三章”“第 4～107 页”这类表达，不要想当然把页码等同于 EPUB 内部顺序；先读取 EPUB spine，确认哪些 XHTML 文件对应目标内容。
+## 边界确认
 
-若发现用户给的页码或范围会包含下一章封面、版权页、目录或其他非目标内容，先指出边界问题并让用户确认是“严格按范围”还是“按内容到章节结束”。
+用户给出“前三章”“第 4～107 页”等表达时，不要直接把它们等同于 EPUB 内部顺序。先读取 spine，确认哪些 XHTML 文件对应目标内容。
 
-## 推荐输出结构
+若目标范围包含下一章封面、版权页、目录或其他非正文内容，先说明观察到的边界情况，并让用户确认是严格按范围抽取，还是按正文内容边界抽取。
 
-将输出放在一个独立目录中，避免和源文件混在一起：
+## 输出命名
+
+规范化 Markdown 默认保存到源 EPUB 同级目录，文件名从 EPUB basename 派生。文件名只做轻度路径清理：替换路径不安全字符、压缩连续空白、去掉首尾空白，必要时截断过长文件名。
+
+整本或单一主体内容：
 
 ```text
-输出目录/
-├── book_first_three_chapters.md
-└── images/
-    ├── 1.01_sou-book.jpg
-    └── ...
+books/example.epub
+books/example.md
+books/example_images/
 ```
 
-Markdown 中图片使用本地相对路径：`![](images/example.jpg)`
+部分章节：
+
+```text
+books/example.epub
+books/example-chapters-1-3.md
+books/example-chapters-1-3_images/
+```
+
+Markdown 中图片使用本地相对路径，例如 `![](example_images/cover.jpg)`。每个规范化 Markdown 使用独立图片目录，避免不同抽取结果互相覆盖。
 
 ## 使用提取脚本
 
@@ -34,7 +49,7 @@ Markdown 中图片使用本地相对路径：`![](images/example.jpg)`
 python3 {baseDir}/scripts/ingest/epub.py path/to/book.epub --list-spine
 ```
 
-输出左侧的序号就是后续 `--spine-start` 和 `--spine-end` 使用的 spine 序号，从 0 开始计数。
+输出左侧序号就是后续 `--spine-start` 和 `--spine-end` 使用的 0-based spine 序号。
 
 ### 按 href 指定章节
 
@@ -44,7 +59,8 @@ python3 {baseDir}/scripts/ingest/epub.py \
   --href Text/Introduction.xhtml \
   --href Text/Chapter1.xhtml \
   --href Text/Chapter1-text.xhtml \
-  --output path/to/output/book_first_chapters.md
+  --output path/to/book-chapters-1-3.md \
+  --image-dir-name book-chapters-1-3_images
 ```
 
 ### 按 spine 序号范围
@@ -54,33 +70,36 @@ python3 {baseDir}/scripts/ingest/epub.py \
   path/to/book.epub \
   --spine-start 4 \
   --spine-end 14 \
-  --output path/to/output/selection.md
+  --output path/to/book-chapters-1-3.md \
+  --image-dir-name book-chapters-1-3_images
 ```
 
-`--spine-start` 和 `--spine-end` 都是闭区间，且以 `--list-spine` 输出的 0-based 序号为准。执行前仍应人工确认边界是否正好落在目标章节。
+`--spine-start` 和 `--spine-end` 都是闭区间。执行前根据 `--list-spine` 的结果确认边界。
 
 ## 清理原则
 
-干净 Markdown 的判断标准：读者打开文件时只看到正文和必要图片，不需要理解 EPUB 内部结构。
+干净 Markdown 的判断标准：读者打开文件时只看到目标正文和必要图片，不需要理解 EPUB 内部结构。
 
-默认删除：
-- 目录页、导航页、landmarks
-- EPUB 内部锚点和 wrapper（`<span id="...">`、`<div class="image">` 等）
-- 脚注区块和脚注回链（除非用户明确要求保留脚注）
-- 排版用途的空白块、水平线、CSS class、无意义 id
+默认排除：
+
+- 目录页、导航页、landmarks；
+- 封面、版权页、广告页等非目标正文；
+- EPUB 内部锚点和 wrapper，例如 `<span id="...">`、`<div class="image">`；
+- 排版用途的空白块、水平线、CSS class、无意义 id。
 
 默认保留：
-- 正文章节标题和小标题
-- 正文段落、列表、引用
-- 粗体、斜体等影响语义或阅读的强调
-- 正文内图片，使用本地相对路径
+
+- 正文章节标题和小标题；
+- 正文段落、列表、引用；
+- 粗体、斜体等影响语义或阅读的强调；
+- 正文内图片，使用本地相对路径。
 
 ## 验证清单
 
 抽取完成后检查：
 
 - Markdown 文件路径和大小是否合理
-- 图片目录路径和图片数量
+- 图片目录路径和图片数量是否合理
 - 图片引用是否全部存在
 - 是否有 `�` 等乱码替换字符
 - 是否有残留 HTML 标签

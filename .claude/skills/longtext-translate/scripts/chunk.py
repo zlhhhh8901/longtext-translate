@@ -251,10 +251,15 @@ def serve_preview(output_dir: str, host: str, port: int, idle_timeout: int) -> d
     server = http.server.ThreadingHTTPServer((host, port), handler)
     server.timeout = 1
     server.last_activity = time.time()  # type: ignore[attr-defined]
+    server.shutdown_requested = False  # type: ignore[attr-defined]
+    stop_reason = "idle timeout"
     while time.time() - server.last_activity < idle_timeout:  # type: ignore[attr-defined]
+        if server.shutdown_requested:  # type: ignore[attr-defined]
+            stop_reason = "confirmed"
+            break
         server.handle_request()
     server.server_close()
-    return {"server": "stopped", "reason": "idle timeout"}
+    return {"server": "stopped", "reason": stop_reason}
 
 
 def make_preview_handler(output_root: Path) -> type[http.server.BaseHTTPRequestHandler]:
@@ -283,12 +288,24 @@ def make_preview_handler(output_root: Path) -> type[http.server.BaseHTTPRequestH
                 self.send_json(400, {"ok": False, "error": "Invalid plan size"})
                 return
             try:
-                plan = json.loads(self.rfile.read(length).decode("utf-8"))
-                if not isinstance(plan, dict):
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(body, dict):
+                    raise ValueError("Request body must be a JSON object")
+                confirm_default = bool(body.get("confirm_default"))
+                raw_plan = body.get("plan")
+                if confirm_default:
+                    plan_path = output_root / PLAN_FILE_NAME
+                    if plan_path.exists():
+                        plan_path.unlink()
+                    self.send_json(200, {"ok": True, "plan_file": None})
+                    self.server.shutdown_requested = True  # type: ignore[attr-defined]
+                    return
+                if not isinstance(raw_plan, dict):
                     raise ValueError("Plan must be a JSON object")
                 plan_path = output_root / PLAN_FILE_NAME
-                plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                plan_path.write_text(json.dumps(raw_plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 self.send_json(200, {"ok": True, "plan_file": str(plan_path)})
+                self.server.shutdown_requested = True  # type: ignore[attr-defined]
             except Exception as error:
                 self.send_json(400, {"ok": False, "error": str(error)})
 
@@ -504,48 +521,19 @@ def build_default_chunks(segments: list[Segment], max_words_per_chunk: int) -> l
     current_ids: list[str] = []
     current_words = 0
 
-    def flush_current() -> None:
-        nonlocal current_ids, current_words
-        if current_ids:
+    for segment in segments:
+        if current_ids and current_words + segment.words > max_words_per_chunk:
             chunks.append(current_ids)
-            current_ids = []
-            current_words = 0
-
-    for section in split_segments_into_sections(segments):
-        section_words = sum(segment.words for segment in section)
-        if section_words <= max_words_per_chunk:
-            if current_ids and current_words + section_words > max_words_per_chunk:
-                flush_current()
-            current_ids.extend(segment.id for segment in section)
-            current_words += section_words
-            continue
-
-        flush_current()
-        for segment in section:
-            if current_ids and current_words + segment.words > max_words_per_chunk:
-                flush_current()
+            current_ids = [segment.id]
+            current_words = segment.words
+        else:
             current_ids.append(segment.id)
             current_words += segment.words
 
-    flush_current()
+    if current_ids:
+        chunks.append(current_ids)
+
     return chunks
-
-
-def split_segments_into_sections(segments: list[Segment]) -> list[list[Segment]]:
-    sections: list[list[Segment]] = []
-    current: list[Segment] = []
-
-    for segment in segments:
-        if segment.kind == "heading" and current:
-            sections.append(current)
-            current = [segment]
-            continue
-        current.append(segment)
-
-    if current:
-        sections.append(current)
-
-    return sections
 
 
 def split_oversized_block(block: Block, max_words_per_chunk: int) -> list[Block]:

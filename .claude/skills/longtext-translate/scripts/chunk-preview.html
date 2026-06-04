@@ -273,7 +273,6 @@
     .nav-title span:first-child { font-family: var(--mono); }
     .nav-title span:last-child { color: var(--ink); letter-spacing: 0; text-transform: none; }
 
-    /* 侧边栏辅助工具区域：大背景色改为透明（与下方导航按钮列表一致） */
     .nav-utility {
       padding: 12px 14px;
       border-bottom: 1px solid var(--line-soft);
@@ -281,11 +280,10 @@
       flex-direction: row;
       flex-wrap: wrap;
       align-items: center;
-      gap: 0px; /* 改为 0px，利用分割线和内间距进行区隔 */
-      background: transparent; /* 背景改为透明，消除色块突兀感 */
+      gap: 0px;
+      background: transparent;
     }
 
-    /* 辅助功能按钮样式重塑 */
     .nav-utility .btn-action {
       flex: 1 1 0;
       min-width: 0;
@@ -767,7 +765,7 @@
     let confirmEndpoint = "/chunk-plan";
     let planFileName = "chunk-plan.json";
     let pendingScrollFrame = false;
-    let confirmedSignature = "";
+    let confirmationState = "ready";
 
     const main = document.getElementById("main");
     const editor = document.getElementById("editor");
@@ -778,6 +776,9 @@
     const confirmButton = document.getElementById("confirmButton");
     const undoButton = document.getElementById("undoButton");
     const resetButton = document.getElementById("resetButton");
+    const expandAllBtn = document.getElementById("expandAllBtn");
+    const collapseAllBtn = document.getElementById("collapseAllBtn");
+    const findOversizedBtn = document.getElementById("findOversizedBtn");
     const chunkCount = document.getElementById("chunkCount");
     const sourceName = document.getElementById("sourceName");
     const maxWords = document.getElementById("maxWords");
@@ -787,8 +788,8 @@
     confirmButton.addEventListener("click", confirmPlan);
     undoButton.addEventListener("click", undoLastChange);
     resetButton.addEventListener("click", resetPlan);
-    document.getElementById("expandAllBtn").addEventListener("click", expandAllChunks);
-    document.getElementById("collapseAllBtn").addEventListener("click", collapseAllChunks);
+    expandAllBtn.addEventListener("click", expandAllChunks);
+    collapseAllBtn.addEventListener("click", collapseAllChunks);
 
     let scrollTimeout;
     main.addEventListener("scroll", () => {
@@ -820,7 +821,7 @@
         maxWordsValue = data.max_words || 0;
         confirmEndpoint = data.confirm_endpoint || "/chunk-plan";
         planFileName = data.plan_file || "chunk-plan.json";
-        confirmedSignature = "";
+        confirmationState = "ready";
         render();
       } catch (err) {
         editor.innerHTML = "";
@@ -855,6 +856,7 @@
         return;
       }
 
+      const interactionLocked = isInteractionLocked();
       navigatorPanel.hidden = false;
       let globalIndex = 1;
 
@@ -889,23 +891,30 @@
               <div class="merge-button">合并相邻分片</div>
             </div>
           `);
-          divider.addEventListener("click", () => mergeChunks(chunkIndex));
-          divider.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              mergeChunks(chunkIndex);
-            }
-          });
+          if (interactionLocked) {
+            divider.setAttribute("aria-disabled", "true");
+            divider.removeAttribute("tabindex");
+          } else {
+            divider.addEventListener("click", () => mergeChunks(chunkIndex));
+            divider.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                mergeChunks(chunkIndex);
+              }
+            });
+          }
           editor.appendChild(divider);
         }
       });
 
-      const findOversizedBtn = document.getElementById("findOversizedBtn");
       if (chunks.some((chunk) => maxWordsValue && wordsOf(chunk) > maxWordsValue)) {
         findOversizedBtn.style.display = "inline-flex";
-        findOversizedBtn.onclick = scrollToFirstOversized;
+        findOversizedBtn.onclick = interactionLocked ? null : scrollToFirstOversized;
+        findOversizedBtn.disabled = interactionLocked;
       } else {
         findOversizedBtn.style.display = "none";
+        findOversizedBtn.onclick = null;
+        findOversizedBtn.disabled = true;
       }
 
       updateNotice();
@@ -952,6 +961,11 @@
           <div class="fold-content">展开隐藏的 ${hiddenCount} 个中间段落</div>
         </div>
       `);
+      if (isInteractionLocked()) {
+        fold.setAttribute("aria-disabled", "true");
+        fold.removeAttribute("tabindex");
+        return fold;
+      }
       const expand = () => {
         expandedChunks.add(chunkId);
         render();
@@ -1006,11 +1020,17 @@
       button.className = `small-action ${variant}`;
       button.type = "button";
       button.textContent = label;
+      button.disabled = isInteractionLocked();
       button.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (button.disabled) return;
         onClick();
       });
       return button;
+    }
+
+    function isInteractionLocked() {
+      return confirmationState === "closing" || confirmationState === "confirmed";
     }
 
     function moveToPreviousChunk(chunkIndex) {
@@ -1101,6 +1121,7 @@
 
     function buildNavigator() {
       navList.innerHTML = "";
+      const interactionLocked = isInteractionLocked();
       const fragment = document.createDocumentFragment();
       chunks.forEach((chunk) => {
         const words = wordsOf(chunk);
@@ -1108,12 +1129,14 @@
         button.className = "nav-item";
         button.type = "button";
         button.dataset.chunkId = chunk.id;
+        button.disabled = interactionLocked;
         button.innerHTML = `
           <span class="nav-item-title">${escapeHtml(chunk.id)}</span>
           <span class="nav-dot${maxWordsValue && words > maxWordsValue ? " warn" : ""}"></span>
           <span class="nav-item-meta">约 ${words} 词 · ${chunk.segment_ids.length} 段</span>
         `;
         button.addEventListener("click", () => {
+          if (button.disabled) return;
           const target = editor.querySelector(`[data-chunk-id="${chunk.id}"]`);
           if (!target) return;
           target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1165,29 +1188,44 @@
 
     function updateHeader(hasData) {
       const modified = hasData && isModified();
+      const confirmed = hasData && confirmationState === "confirmed";
+      const interactionLocked = confirmed || confirmationState === "closing";
       const oversized = hasData ? chunks.filter((chunk) => maxWordsValue && wordsOf(chunk) > maxWordsValue).length : 0;
       chunkCount.textContent = hasData ? chunks.length : "--";
       sourceName.textContent = hasData && sourceNameValue ? sourceNameValue : "--";
       maxWords.textContent = hasData && maxWordsValue ? maxWordsValue : "--";
       overview.textContent = hasData ? `${chunks.length} 片${oversized ? ` · ${oversized} 超限` : ""}` : "--";
-      const confirmed = hasData && confirmedSignature === serializeChunks(chunks);
       statusPill.textContent = !hasData ? "未加载" : confirmed ? "已确认" : modified ? "已调整 · 待确认" : "默认方案";
       statusPill.className = modified && !confirmed ? "status-pill changed" : "status-pill";
       statusPill.title = !hasData
         ? "预览数据尚未加载。"
         : confirmed
-          ? `当前分片方案已保存到 ${planFileName}，回到对话回复继续即可。`
+          ? modified
+            ? `当前分片方案已保存到 ${planFileName}。本地预览即将关闭，回到对话回复继续即可。`
+            : "当前默认分片已确认，无需额外写入方案文件。本地预览即将关闭，回到对话回复继续即可。"
           : modified
             ? "已检测到边界调整。点击确认后，页面会把当前方案保存给后续脚本使用。"
-            : "当前仍是默认分片。若不想调整，可直接回到对话回复继续；也可点击确认保存当前方案。";
+            : "当前仍是默认分片。若接受该方案，可直接确认继续；此时不会额外生成方案文件。";
       limitPill.hidden = !oversized;
       limitPill.textContent = `${oversized} 个超限`;
       limitPill.title = oversized ? `有 ${oversized} 个分片超过建议上限，请确认这是有意保留。` : "";
-      confirmButton.disabled = !hasData;
-      undoButton.disabled = !hasData || history.length === 0;
-      resetButton.disabled = !hasData || !modified;
-      confirmButton.textContent = confirmed ? "已确认，回到对话继续" : "确认分片方案";
-      confirmButton.title = "保存当前分片方案，供后续脚本生成 chunks。";
+      confirmButton.disabled = !hasData || interactionLocked;
+      undoButton.disabled = !hasData || interactionLocked || history.length === 0;
+      resetButton.disabled = !hasData || interactionLocked || !modified;
+      expandAllBtn.disabled = !hasData || interactionLocked;
+      collapseAllBtn.disabled = !hasData || interactionLocked;
+      confirmButton.textContent = confirmationState === "closing"
+        ? "正在确认…"
+        : confirmed
+          ? "已确认"
+          : modified
+            ? "确认分片方案"
+            : "按默认方案继续";
+      confirmButton.title = confirmed
+        ? "当前预览已确认。"
+        : modified
+          ? "保存当前分片方案，供后续脚本生成 chunks。"
+          : "接受当前默认分片并继续，不会额外生成方案文件。";
     }
 
     function buildCompactPlan() {
@@ -1206,25 +1244,32 @@
         showToast("请通过本地预览 URL 打开此页面后再确认", "error");
         return;
       }
-      const plan = buildCompactPlan();
-      confirmButton.disabled = true;
-      confirmButton.textContent = "正在确认…";
+      if (isInteractionLocked()) {
+        return;
+      }
+      const modified = isModified();
+      const payload = { confirm_default: !modified };
+      if (modified) {
+        payload.plan = buildCompactPlan();
+      }
+      confirmationState = "closing";
+      render();
       try {
         const response = await fetch(confirmEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(plan)
+          body: JSON.stringify(payload)
         });
         const result = await response.json();
         if (!response.ok || !result.ok) {
           throw new Error(result.error || "确认失败");
         }
-        confirmedSignature = serializeChunks(chunks);
+        confirmationState = "confirmed";
         render();
-        showToast(`分片方案已保存到 ${planFileName}`);
+        showToast(modified ? `分片方案已保存到 ${planFileName}，本地预览即将关闭` : "已接受默认分片方案，本地预览即将关闭");
       } catch (err) {
-        confirmButton.disabled = false;
-        confirmButton.textContent = "确认分片方案";
+        confirmationState = "ready";
+        render();
         showToast(err.message || "确认失败，请检查本地预览服务是否仍在运行", "error");
       }
     }

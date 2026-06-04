@@ -42,5 +42,9 @@ vendor/libghostty-vt/.agents/
 
 test/
 test2/
+test_v1/
+test_new/
+translation-eval/
+test_new2/
 
 __pycache__
