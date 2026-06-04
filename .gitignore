@@ -35,16 +35,8 @@ vendor/libghostty-vt/.agents/
 *.sw?
 
 # Python cache
-.claude/skills/**/scripts/__pycache__/
+__pycache__/
+**/scripts/__pycache__/
 
 # Local backend secrets
 **/scripts/node_modules/
-
-test/
-test2/
-test_v1/
-test_new/
-translation-eval/
-test_new2/
-
-__pycache__
