@@ -109,7 +109,7 @@ mineru-open-api auth --verify
 
 若未配置，agent **不能**在聊天中执行 `mineru-open-api auth`（该命令需要交互式输入，当前会话无法支持，会直接报错 EOF），也**不能**通过环境变量 `MINERU_TOKEN` 传递 Token（该方式会将 Token 暴露给 agent）。正确的做法是引导用户**新开一个终端窗口**，在本地终端中完成一次性配置：
 
-> MinerU 需要 API Token 才能执行提取。请**新开一个终端窗口**，运行以下命令完成一次性配置（Token 将写入 `~/.mineru/config.yaml`，后续所有会话永久生效）：
+> MinerU 需要 API Token 才能执行提取。请到 [mineru.net](https://mineru.net) 官网获取 Token，然后**新开一个终端窗口**运行以下命令完成一次性配置（Token 将写入 `~/.mineru/config.yaml`，后续所有会话永久生效）：
 >
 > ```
 > mineru-open-api auth

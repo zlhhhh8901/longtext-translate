@@ -285,6 +285,8 @@ def create_preview(file: str, output_dir: str = "", start_server: bool = True) -
     result: dict[str, object] = {
         "source": file,
         "preview_file": str(preview_path),
+        "source_sha256": source_sha256,
+        "total_changes": total_changes,
     }
     if start_server:
         result.update(start_preview_server(output_root, file))

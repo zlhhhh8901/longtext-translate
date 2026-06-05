@@ -967,8 +967,9 @@
         return fold;
       }
       const expand = () => {
-        expandedChunks.add(chunkId);
-        render();
+        renderPreservingScroll(() => {
+          expandedChunks.add(chunkId);
+        });
       };
       fold.addEventListener("click", expand);
       fold.addEventListener("keydown", (event) => {
@@ -987,6 +988,8 @@
       const kind = segment?.kind || "flow";
       const row = document.createElement("div");
       row.className = `para-row kind-${kind} ${headingLevelClass(segment)}`.trim();
+      row.dataset.segmentId = segmentId;
+      row.dataset.chunkId = chunk.id;
 
       const gutter = document.createElement("div");
       gutter.className = "gutter";
@@ -1033,15 +1036,100 @@
       return confirmationState === "closing" || confirmationState === "confirmed";
     }
 
+    function captureScrollAnchor() {
+      const mainRect = main.getBoundingClientRect();
+      const anchorLine = mainRect.top + Math.min(140, main.clientHeight / 3);
+      const candidates = [
+        ...editor.querySelectorAll(".para-row[data-segment-id]"),
+        ...editor.querySelectorAll(".chunk[data-chunk-id]")
+      ];
+      let best = null;
+
+      candidates.forEach((element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.bottom < mainRect.top || rect.top > mainRect.bottom) return;
+        const distance = rect.top <= anchorLine ? anchorLine - rect.top : rect.top - anchorLine;
+        const priority = element.dataset.segmentId ? 0 : 1;
+        if (
+          !best ||
+          priority < best.priority ||
+          (priority === best.priority && distance < best.distance)
+        ) {
+          best = {
+            segmentId: element.dataset.segmentId || "",
+            chunkId: element.dataset.chunkId || "",
+            topOffset: rect.top - mainRect.top,
+            distance,
+            priority
+          };
+        }
+      });
+
+      return best;
+    }
+
+    function restoreScrollAnchor(anchor) {
+      if (!anchor) return;
+      const target = findAnchorTarget(anchor);
+      if (!target) return;
+
+      const mainRect = main.getBoundingClientRect();
+      const targetTop = target.getBoundingClientRect().top - mainRect.top;
+      main.scrollTop += targetTop - anchor.topOffset;
+      updateActiveNav();
+    }
+
+    function findAnchorTarget(anchor) {
+      if (anchor.segmentId) {
+        const segmentTarget = [...editor.querySelectorAll(".para-row[data-segment-id]")]
+          .find((row) => row.dataset.segmentId === anchor.segmentId);
+        if (segmentTarget) return segmentTarget;
+      }
+      if (anchor.chunkId) {
+        const chunkTarget = [...editor.querySelectorAll(".chunk[data-chunk-id]")]
+          .find((chunk) => chunk.dataset.chunkId === anchor.chunkId);
+        if (chunkTarget) return chunkTarget;
+      }
+      return null;
+    }
+
+    function renderPreservingScroll(change) {
+      const anchor = captureScrollAnchor();
+      change();
+      render();
+      restoreScrollAnchor(anchor);
+    }
+
+    function expandedSegmentIds() {
+      const ids = new Set();
+      chunks.forEach((chunk) => {
+        if (!expandedChunks.has(chunk.id)) return;
+        chunk.segment_ids.forEach((segmentId) => ids.add(segmentId));
+      });
+      return ids;
+    }
+
+    function restoreExpandedChunks(segmentIds) {
+      expandedChunks.clear();
+      chunks.forEach((chunk) => {
+        if (chunk.segment_ids.some((segmentId) => segmentIds.has(segmentId))) {
+          expandedChunks.add(chunk.id);
+        }
+      });
+    }
+
     function moveToPreviousChunk(chunkIndex) {
       const current = chunks[chunkIndex];
       const previous = chunks[chunkIndex - 1];
       if (!current || !previous || current.segment_ids.length === 0) return;
-      saveHistory();
-      previous.segment_ids.push(current.segment_ids.shift());
-      removeEmptyChunk(chunkIndex);
-      renumberChunks();
-      render();
+      renderPreservingScroll(() => {
+        const expandedBefore = expandedSegmentIds();
+        saveHistory();
+        previous.segment_ids.push(current.segment_ids.shift());
+        removeEmptyChunk(chunkIndex);
+        renumberChunks();
+        restoreExpandedChunks(expandedBefore);
+      });
       showToast("已并入上一片");
     }
 
@@ -1049,23 +1137,28 @@
       const current = chunks[chunkIndex];
       const next = chunks[chunkIndex + 1];
       if (!current || !next || current.segment_ids.length === 0) return;
-      saveHistory();
-      next.segment_ids.unshift(current.segment_ids.pop());
-      removeEmptyChunk(chunkIndex);
-      renumberChunks();
-      render();
+      renderPreservingScroll(() => {
+        const expandedBefore = expandedSegmentIds();
+        saveHistory();
+        next.segment_ids.unshift(current.segment_ids.pop());
+        removeEmptyChunk(chunkIndex);
+        renumberChunks();
+        restoreExpandedChunks(expandedBefore);
+      });
       showToast("已并入下一片");
     }
 
     function splitChunk(chunkIndex, segmentIndex) {
       const chunk = chunks[chunkIndex];
       if (!chunk || segmentIndex <= 0 || segmentIndex >= chunk.segment_ids.length) return;
-      saveHistory();
-      const newSegmentIds = chunk.segment_ids.splice(segmentIndex);
-      chunks.splice(chunkIndex + 1, 0, { id: "", segment_ids: newSegmentIds });
-      expandedChunks.delete(chunk.id);
-      renumberChunks();
-      render();
+      renderPreservingScroll(() => {
+        const expandedBefore = expandedSegmentIds();
+        saveHistory();
+        const newSegmentIds = chunk.segment_ids.splice(segmentIndex);
+        chunks.splice(chunkIndex + 1, 0, { id: "", segment_ids: newSegmentIds });
+        renumberChunks();
+        restoreExpandedChunks(expandedBefore);
+      });
       showToast("已拆分为新分片");
     }
 
@@ -1073,13 +1166,14 @@
       const current = chunks[chunkIndex];
       const next = chunks[chunkIndex + 1];
       if (!current || !next) return;
-      saveHistory();
-      current.segment_ids.push(...next.segment_ids);
-      if (expandedChunks.has(next.id)) expandedChunks.add(current.id);
-      expandedChunks.delete(next.id);
-      chunks.splice(chunkIndex + 1, 1);
-      renumberChunks();
-      render();
+      renderPreservingScroll(() => {
+        const expandedBefore = expandedSegmentIds();
+        saveHistory();
+        current.segment_ids.push(...next.segment_ids);
+        chunks.splice(chunkIndex + 1, 1);
+        renumberChunks();
+        restoreExpandedChunks(expandedBefore);
+      });
       showToast("相邻分片已合并");
     }
 
@@ -1092,18 +1186,20 @@
 
     function undoLastChange() {
       if (history.length === 0) return;
-      chunks = history.pop();
-      renumberChunks();
-      render();
+      renderPreservingScroll(() => {
+        chunks = history.pop();
+        renumberChunks();
+      });
       showToast("已撤销上一步");
     }
 
     function resetPlan() {
       if (!isModified()) return;
-      saveHistory();
-      chunks = cloneChunks(originalChunks);
-      expandedChunks.clear();
-      render();
+      renderPreservingScroll(() => {
+        saveHistory();
+        chunks = cloneChunks(originalChunks);
+        expandedChunks.clear();
+      });
       showToast("已恢复默认分片");
     }
 
@@ -1275,14 +1371,16 @@
     }
 
     function expandAllChunks() {
-      chunks.forEach((chunk) => expandedChunks.add(chunk.id));
-      render();
+      renderPreservingScroll(() => {
+        chunks.forEach((chunk) => expandedChunks.add(chunk.id));
+      });
       showToast("所有隐藏段落已完全展开");
     }
 
     function collapseAllChunks() {
-      expandedChunks.clear();
-      render();
+      renderPreservingScroll(() => {
+        expandedChunks.clear();
+      });
       showToast("长分片已收起，仅显示首尾部");
     }
 

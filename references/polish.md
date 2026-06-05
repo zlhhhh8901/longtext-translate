@@ -99,6 +99,14 @@ python3 {baseDir}/scripts/polish.py preview translation.md --output-dir <output-
 
 用户在预览页面中查看每一处排版变更，若某条变更不应执行，可点击按钮恢复原文。用户点击「应用修正」将选中的变更写入 `translation.md`。若用户放弃所有修改，关闭页面即可，文件保持原样。
 
+预览生成后若用户继续对话，Agent 必须先判断修正状态，再决定是否提醒，而不是无条件重复催促。
+
+从 `polish-preview.html` 内嵌数据中读取 `source_sha256`（生成时的译文指纹）和 `total_changes`（修正条数），与当前 `translation.md` 的 sha256 比对：
+
+- `total_changes` 为 0 → 无修正项，跳过。
+- 当前 sha256 ≠ `source_sha256` → 文件已变化（用户已落地修正，或被其他步骤修改），旧预览失效，不再提醒。若此前生成了双语版，直接基于当前译文重新生成。
+- `total_changes` > 0 且 sha256 匹配 → 修正尚未落地，提醒用户前往预览页确认。
+
 ### 处理范围
 
 脚本仅处理标题、段落和列表项中的可见正文，以下内容完整保留：代码块与行内代码、链接与图片、数学公式、表格与引用块、URL 与邮箱地址。
