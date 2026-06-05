@@ -51,6 +51,21 @@ npx skills add zlhhhh8901/longtext-translate
 
 Skill 内置了无障碍流程引导，使用者无需知道其内部实现。
 
+## 费用参考
+
+**测试样本**：Stein on Writing.pdf - 776 KB，5070 行，104378 词，604552 字符
+
+**运行模型**：deepseek-v4-pro（推理强度：High，运行环境：ClaudeCode）
+
+| 阶段 | 耗时 | 费用 |
+|------|------|------|
+| 规范化（PDF → Markdown） | 57 秒 | ¥0.16 |
+| 翻译（22 个 subagent 并行） | 14 分 21 秒 | ¥4.91 |
+| 审校 | 8 分 41 秒 | ¥0.40 |
+| 精编 | 2 分 33 秒 | ¥0.28 |
+| 双语版 | 2 分 3 秒 | ¥0.09 |
+| **合计** | **28 分 35 秒** | **¥5.84** |
+
 ## 产出文件
 
 所有产出都放在源文件旁边的同名输出目录里（例如 `article.md` → `article-zh/`）：
@@ -69,31 +84,6 @@ article-zh/
 ```
 
 短文本翻译只有 `translation.md` 一个产出。
-
-## 运行依赖
-
-Agent 会自动按需安装：
-
-- **Python 3**（必需）
-- `markdown-it-py >= 4.0, < 5`（分片、双语对齐、精编预览需要）
-- `autocorrect-py`（精编预览——中文排版规范化，仅精编流程需要）
-- [MinerU CLI](https://github.com/opendatalab/MinerU)（处理 PDF/Word/图片时需要）
-
-Agent 会引导安装与配置：`MinerU API Token`。
-
-## 费用参考
-
-**测试样本**：Stein on Writing.pdf - 776 KB，5070 行，104378 词，604552 字符
-**运行模型**：deepseek-v4-pro（推理强度：High，运行环境：ClaudeCode）
-
-| 阶段 | 耗时 | 费用 |
-|------|------|------|
-| 规范化（PDF → Markdown） | 57 秒 | ¥0.16 |
-| 翻译（22 个 subagent 并行） | 14 分 21 秒 | ¥4.91 |
-| 审校 | 8 分 41 秒 | ¥0.40 |
-| 精编 | 2 分 33 秒 | ¥0.28 |
-| 双语版 | 2 分 3 秒 | ¥0.09 |
-| **合计** | **28 分 35 秒** | **¥5.84** |
 
 ## 致谢
 
