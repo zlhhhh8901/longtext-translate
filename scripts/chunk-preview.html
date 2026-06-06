@@ -607,6 +607,32 @@
       gap: 8px;
       padding: 7px 16px;
       font-weight: 600;
+      flex-wrap: wrap;
+    }
+
+    .fold-meta {
+      color: var(--faint);
+      font-family: var(--sans);
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .fold-row.expanded {
+      background: linear-gradient(90deg, var(--accent-soft), transparent 72%), var(--paper-soft);
+      color: var(--ink);
+    }
+
+    .fold-row.expanded .fold-gutter {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .para-row.in-expanded-region {
+      background: linear-gradient(90deg, var(--accent-soft), transparent 84%);
+    }
+
+    .para-row.in-expanded-region .gutter {
+      color: var(--accent);
     }
 
     .merge-divider {
@@ -752,7 +778,7 @@
   <script>
     const collapseThreshold = 10;
     const maxHistory = 50;
-    const expandedChunks = new Set();
+    const expandedHiddenSegmentIds = new Set();
 
     let segments = [];
     let chunks = [];
@@ -924,26 +950,47 @@
     }
 
     function renderChunkBody(chunkElement, chunk, chunkIndex, globalStartIndex) {
-      const isExpanded = expandedChunks.has(chunk.id);
-      const shouldCollapse = chunk.segment_ids.length > collapseThreshold && !isExpanded;
-      const visibleIndexes = visibleSegmentIndexes(chunk, shouldCollapse);
+      const items = chunkRenderItems(chunk);
+
+      items.forEach((item) => {
+        if (item.type === "segment") {
+          const row = renderParagraphRow(chunkIndex, item.segmentIndex, globalStartIndex + item.segmentIndex);
+          if (item.inExpandedRegion) {
+            row.classList.add("in-expanded-region");
+          }
+          chunkElement.appendChild(row);
+          return;
+        }
+        chunkElement.appendChild(renderFoldRow(item, chunkIndex, globalStartIndex));
+      });
+    }
+
+    function chunkRenderItems(chunk) {
+      const length = chunk.segment_ids.length;
+      if (length <= collapseThreshold) {
+        return chunk.segment_ids.map((_, index) => ({ type: "segment", segmentIndex: index, inExpandedRegion: false }));
+      }
+
+      const visibleIndexes = visibleSegmentIndexes(chunk);
+      const items = [];
       let cursor = 0;
 
       visibleIndexes.forEach((segmentIndex) => {
         if (segmentIndex > cursor) {
-          chunkElement.appendChild(renderFoldRow(chunk.id, segmentIndex - cursor));
+          items.push(buildHiddenRegion(chunk, cursor, segmentIndex - 1));
         }
-        chunkElement.appendChild(renderParagraphRow(chunkIndex, segmentIndex, globalStartIndex + segmentIndex));
+        items.push({ type: "segment", segmentIndex, inExpandedRegion: false });
         cursor = segmentIndex + 1;
       });
 
-      if (cursor < chunk.segment_ids.length) {
-        chunkElement.appendChild(renderFoldRow(chunk.id, chunk.segment_ids.length - cursor));
+      if (cursor < length) {
+        items.push(buildHiddenRegion(chunk, cursor, length - 1));
       }
+
+      return items;
     }
 
-    function visibleSegmentIndexes(chunk, shouldCollapse) {
-      if (!shouldCollapse) return chunk.segment_ids.map((_, index) => index);
+    function visibleSegmentIndexes(chunk) {
       const visible = new Set([0, chunk.segment_ids.length - 1]);
       chunk.segment_ids.forEach((segmentId, index) => {
         const segment = getSegment(segmentId);
@@ -954,11 +1001,33 @@
       return [...visible].sort((a, b) => a - b);
     }
 
-    function renderFoldRow(chunkId, hiddenCount) {
+    function buildHiddenRegion(chunk, startIndex, endIndex) {
+      const segmentIds = chunk.segment_ids.slice(startIndex, endIndex + 1);
+      const isExpanded = segmentIds.every((segmentId) => expandedHiddenSegmentIds.has(segmentId));
+      return {
+        type: "region",
+        chunkId: chunk.id,
+        startIndex,
+        endIndex,
+        hiddenCount: endIndex - startIndex + 1,
+        segmentIds,
+        words: wordsOfSegmentIds(segmentIds),
+        isExpanded
+      };
+    }
+
+    function renderFoldRow(region, chunkIndex, globalStartIndex) {
+      if (region.isExpanded) {
+        return renderExpandedRegion(region, chunkIndex, globalStartIndex);
+      }
+
       const fold = elementFromHtml(`
         <div class="fold-row" title="点击展开隐藏段落" role="button" tabindex="0">
           <div class="fold-gutter">···</div>
-          <div class="fold-content">展开隐藏的 ${hiddenCount} 个中间段落</div>
+          <div class="fold-content">
+            <span>展开隐藏的 ${region.hiddenCount} 个中间段落</span>
+            <span class="fold-meta">约 ${region.words} 词</span>
+          </div>
         </div>
       `);
       if (isInteractionLocked()) {
@@ -968,7 +1037,7 @@
       }
       const expand = () => {
         renderPreservingScroll(() => {
-          expandedChunks.add(chunkId);
+          expandRegion(region.segmentIds);
         });
       };
       fold.addEventListener("click", expand);
@@ -979,6 +1048,45 @@
         }
       });
       return fold;
+    }
+
+    function renderExpandedRegion(region, chunkIndex, globalStartIndex) {
+      const fragment = document.createDocumentFragment();
+      const fold = elementFromHtml(`
+        <div class="fold-row expanded" title="点击收起当前展开区域" role="button" tabindex="0">
+          <div class="fold-gutter">展开</div>
+          <div class="fold-content">
+            <span>已展开 ${region.hiddenCount} 个中间段落</span>
+            <span class="fold-meta">约 ${region.words} 词 · 点击收起此处</span>
+          </div>
+        </div>
+      `);
+
+      if (isInteractionLocked()) {
+        fold.setAttribute("aria-disabled", "true");
+        fold.removeAttribute("tabindex");
+      } else {
+        const collapse = () => {
+          renderPreservingScroll(() => {
+            collapseRegion(region.segmentIds);
+          });
+        };
+        fold.addEventListener("click", collapse);
+        fold.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            collapse();
+          }
+        });
+      }
+
+      fragment.appendChild(fold);
+      for (let index = region.startIndex; index <= region.endIndex; index += 1) {
+        const row = renderParagraphRow(chunkIndex, index, globalStartIndex + index);
+        row.classList.add("in-expanded-region");
+        fragment.appendChild(row);
+      }
+      return fragment;
     }
 
     function renderParagraphRow(chunkIndex, segmentIndex, globalIndex) {
@@ -1101,21 +1209,46 @@
     }
 
     function expandedSegmentIds() {
-      const ids = new Set();
-      chunks.forEach((chunk) => {
-        if (!expandedChunks.has(chunk.id)) return;
-        chunk.segment_ids.forEach((segmentId) => ids.add(segmentId));
-      });
-      return ids;
+      return new Set(expandedHiddenSegmentIds);
     }
 
     function restoreExpandedChunks(segmentIds) {
-      expandedChunks.clear();
+      expandedHiddenSegmentIds.clear();
       chunks.forEach((chunk) => {
-        if (chunk.segment_ids.some((segmentId) => segmentIds.has(segmentId))) {
-          expandedChunks.add(chunk.id);
-        }
+        const regions = chunkHiddenRegions(chunk);
+        regions.forEach((region) => {
+          if (region.segmentIds.some((segmentId) => segmentIds.has(segmentId))) {
+            expandRegion(region.segmentIds);
+          }
+        });
       });
+    }
+
+    function chunkHiddenRegions(chunk) {
+      if (chunk.segment_ids.length <= collapseThreshold) {
+        return [];
+      }
+      const visibleIndexes = visibleSegmentIndexes(chunk);
+      const regions = [];
+      let cursor = 0;
+      visibleIndexes.forEach((segmentIndex) => {
+        if (segmentIndex > cursor) {
+          regions.push(buildHiddenRegion(chunk, cursor, segmentIndex - 1));
+        }
+        cursor = segmentIndex + 1;
+      });
+      if (cursor < chunk.segment_ids.length) {
+        regions.push(buildHiddenRegion(chunk, cursor, chunk.segment_ids.length - 1));
+      }
+      return regions;
+    }
+
+    function expandRegion(segmentIds) {
+      segmentIds.forEach((segmentId) => expandedHiddenSegmentIds.add(segmentId));
+    }
+
+    function collapseRegion(segmentIds) {
+      segmentIds.forEach((segmentId) => expandedHiddenSegmentIds.delete(segmentId));
     }
 
     function moveToPreviousChunk(chunkIndex) {
@@ -1179,7 +1312,7 @@
 
     function removeEmptyChunk(chunkIndex) {
       if (chunks[chunkIndex]?.segment_ids.length === 0) {
-        expandedChunks.delete(chunks[chunkIndex].id);
+        collapseRegion(chunks[chunkIndex].segment_ids);
         chunks.splice(chunkIndex, 1);
       }
     }
@@ -1198,7 +1331,7 @@
       renderPreservingScroll(() => {
         saveHistory();
         chunks = cloneChunks(originalChunks);
-        expandedChunks.clear();
+        expandedHiddenSegmentIds.clear();
       });
       showToast("已恢复默认分片");
     }
@@ -1372,14 +1505,16 @@
 
     function expandAllChunks() {
       renderPreservingScroll(() => {
-        chunks.forEach((chunk) => expandedChunks.add(chunk.id));
+        chunks.forEach((chunk) => {
+          chunkHiddenRegions(chunk).forEach((region) => expandRegion(region.segmentIds));
+        });
       });
       showToast("所有隐藏段落已完全展开");
     }
 
     function collapseAllChunks() {
       renderPreservingScroll(() => {
-        expandedChunks.clear();
+        expandedHiddenSegmentIds.clear();
       });
       showToast("长分片已收起，仅显示首尾部");
     }
@@ -1408,7 +1543,11 @@
     }
 
     function wordsOf(chunk) {
-      return chunk.segment_ids.reduce((sum, segmentId) => {
+      return wordsOfSegmentIds(chunk.segment_ids);
+    }
+
+    function wordsOfSegmentIds(segmentIds) {
+      return segmentIds.reduce((sum, segmentId) => {
         const segment = getSegment(segmentId);
         return sum + (segment ? segment.words : 0);
       }, 0);

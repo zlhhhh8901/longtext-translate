@@ -125,15 +125,93 @@ def normalize_emphasis_spacing_for_marker(text: str, marker: str) -> str:
 
 
 def add_space_after_cjk_emphasis(text: str, marker: str) -> str:
-    pattern = emphasis_terminal_punctuation_pattern(marker)
+    pieces: list[str] = []
+    cursor = 0
 
-    def replace(match: re.Match[str]) -> str:
-        next_char = match.group("next")
-        if next_char.isspace() or is_unicode_punctuation(next_char):
-            return match.group(0)
-        return f"{match.group('span')} {next_char}"
+    for start, end in iter_emphasis_spans(text, marker):
+        pieces.append(text[cursor:start])
+        span = text[start:end]
+        pieces.append(span)
 
-    return pattern.sub(replace, text)
+        next_char = text[end:end + 1]
+        if should_add_space_after_emphasis(span, next_char, marker):
+            pieces.append(" ")
+        cursor = end
+
+    if cursor == 0:
+        return text
+
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+
+def iter_emphasis_spans(text: str, marker: str):
+    marker_length = len(marker)
+    index = 0
+
+    while index < len(text):
+        start = text.find(marker, index)
+        if start == -1:
+            return
+        if not is_marker_boundary(text, start, marker):
+            index = start + 1
+            continue
+
+        content_start = start + marker_length
+        end = find_emphasis_closing_marker(text, content_start, marker)
+        if end is None:
+            index = start + marker_length
+            continue
+
+        yield start, end + marker_length
+        index = end + marker_length
+
+
+
+def is_marker_boundary(text: str, index: int, marker: str) -> bool:
+    marker_char = marker[0]
+    before = text[index - 1:index] if index > 0 else ""
+    after_index = index + len(marker)
+    after = text[after_index:after_index + 1]
+    return before != marker_char and after != marker_char
+
+
+
+def find_emphasis_closing_marker(text: str, start: int, marker: str) -> int | None:
+    index = start
+    while True:
+        end = text.find(marker, index)
+        if end == -1:
+            return None
+        if not is_marker_boundary(text, end, marker):
+            index = end + 1
+            continue
+
+        content = text[start:end]
+        if is_simple_emphasis_content(content):
+            return end
+        index = end + 1
+
+
+
+def is_simple_emphasis_content(content: str) -> bool:
+    stripped = content.strip(" \t")
+    if not stripped:
+        return False
+    if any(character in INLINE_FORMATTING_MARKERS or character == "\n" for character in content):
+        return False
+    return True
+
+
+
+def should_add_space_after_emphasis(span: str, next_char: str, marker: str) -> bool:
+    if not next_char or next_char.isspace() or is_unicode_punctuation(next_char):
+        return False
+
+    content = span[len(marker):-len(marker)]
+    stripped = content.rstrip(" \t")
+    return bool(stripped) and stripped[-1] in CJK_EMPHASIS_PUNCT
 
 
 def emphasis_spacing_pattern(marker: str) -> re.Pattern[str]:
@@ -148,18 +226,6 @@ def emphasis_spacing_pattern(marker: str) -> re.Pattern[str]:
         rf"(?P<trailing>[ \t]+)"
         rf"{escaped_marker}"
         rf"(?!{marker_char})"
-    )
-
-
-def emphasis_terminal_punctuation_pattern(marker: str) -> re.Pattern[str]:
-    marker_char = re.escape(marker[0])
-    escaped_marker = re.escape(marker)
-    excluded = re.escape(INLINE_FORMATTING_MARKERS)
-    punct = re.escape(CJK_EMPHASIS_PUNCT)
-    return re.compile(
-        rf"(?<!{marker_char})"
-        rf"(?P<span>{escaped_marker}[^{excluded}\n]*[{punct}][^{excluded}\n]*{escaped_marker})"
-        rf"(?P<next>\S)"
     )
 
 
