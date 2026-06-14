@@ -1,31 +1,51 @@
 # longtext-translate
 
-**AI agent 翻译 skill**，处理任意长度、任意格式的文本——从一段话到整本书，从纯文本到 PDF、EPUB、Word、图片。告诉 Agent 你想翻译什么，剩下的由它完成。
+面向外文阅读场景的翻译 Agent Skill。把任意格式、长度的材料交给 Agent，拿回可以直接舒服阅读的母语译文。
 
 ## 解决什么问题
 
-直接用 LLM 翻译存在几个短板：
+翻译，尤其是长文本翻译，常卡在这几个地方：
 
-- **长文本质量衰减**：超出上下文窗口后，后半程翻译质量明显下降——术语前后不一致、论证逻辑丢失、段落之间语气不连贯。
-- **翻译腔影响阅读**：句子看似通顺，但行文仍受原文语序和表达习惯束缚，读者需要反复揣摩才能理解，阅读负担并未真正消除。
-- **非文本材料处理繁琐**：源文件是 PDF 或 EPUB 时，需要手动提取文字、清洗排版、处理图片路径，准备工作本身就很耗时。
-- **审校和精编缺乏流程支撑**：翻译完成后想进一步打磨，缺少系统的诊断框架、修正流程和排版规范，难以保证审校质量。
+- 源文件如果是 PDF 或 EPUB，得先手动提取文字、清洗排版、处理图片路径
+- 文本一长，LLM 的输出质量便开始衰减：术语漂移、翻译腔加重、段落间逻辑断裂等等
+- 即使拿到译文，也未必能放心阅读——一边排查翻译偏差，一边在脑中修正拗口表达，理解成本居高不下
+
+实际过程往往是“准备材料 → 翻译 → 磕磕碰碰地读 → 发现问题 → 手动修正润色 → 再读”的反复循环。一篇文献，可能要耗上一两周才能真正吸收。
+
+而这个 Skill 接手了费力的人工环节，你只需在关键决策点介入。
 
 ## 工作流程
 
-<img src="assets/introduction.png" alt="introduction" style="zoom:50%;" />
+<img src="assets/introduction.png" alt="工作流程" style="zoom:40%;" />
 
 ## 主要特性
 
-**多格式输入**　支持 PDF、EPUB、Word、图片、纯文本、Markdown 和 URL，统一转为干净的 Markdown 后再翻译，格式转换细节由 Agent 自动处理。
+**任意格式，统一入口**　PDF、EPUB、Word、图片、网页、纯文本均可——Skill 自动规范化为干净的 Markdown，然后通读全文、分析内容与翻译难点，提出完整的翻译方案供你确认。
 
-**先理解再翻译**　Agent 会先通读材料，理解内容、语域和翻译难点，然后一次性提出完整的翻译方案——包括目标语言、读者定位和术语策略。用户确认后才开始执行。
+**长文本质量稳定**　长文本会先分片，生成共享术语表和翻译提示词后再委派 subagent 并行翻译，确保跨分片的术语和风格统一。每份译文落盘前都经过六个维度的回源抽查，发现问题直接修正。
 
-**长文本一致性**　长文本模式下，分片前先生成共享术语表和翻译简报，每个并行 subagent 均以这两份文件为基准执行翻译，确保跨分片的术语和风格统一。
+**按需继续打磨**　翻译完成后可选择审校（对照原文修正 + 脱离原文润色）、精编（显化重点结构 / 补充背景注释 / 统一中文排版）或双语版（原文与译文逐段对齐）。
 
-**按需深入打磨**　质量门禁之后，可按需选择后续处理。审校：逐段对照原文，产出可证伪的结构化诊断报告。精编：将译文作为独立的目标语言文章做最终打磨，包括显化论证结构、补充背景说明和统一中文排版。双语版：原文与译文按段落对齐、交替排列，便于对照阅读。三项可全选也可只选其一。
+**关键决策由人把关**　分片边界调整、排版修正审阅等高风险且不适合纯文本描述的环节，均提供可视化预览界面，逐条确认后再落地。
 
-**关键决策由人把关**　分片边界调整、排版修正审阅等高风险且不适合纯文本描述的环节，通过本地服务启动 HTML 页面在浏览器中交互完成——长文本翻译前可预览分片方案，查看每片的起止位置和词数，手动调整分片边界后再执行，避免切分位置不当影响翻译质量；精编阶段的排版修正同样提供浏览器预览，用户确认后才落地文件。
+**本地可追溯**　所有中间产物都保存在本地，随时可以回来继续处理。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="assets/chunk-html-demo.png" target="_blank">
+        <img src="assets/chunk-html-demo.png" alt="分片预览与调整页面截图" style="max-width: 480px; width: 100%; border-radius: 8px; box-shadow: 0 2px 12px #0002;"/>
+      </a>
+      <br>分片预览与调整<br>
+    </td>
+    <td align="center" width="50%">
+      <a href="assets/polish-html-demo.png" target="_blank">
+        <img src="assets/polish-html-demo.png" alt="排版修正预览与确认页面截图" style="max-width: 480px; width: 100%; border-radius: 8px; box-shadow: 0 2px 12px #0002;"/>
+      </a>
+      <br>排版修正预览与确认<br>
+    </td>
+  </tr>
+</table>
 
 ## 快速开始
 
@@ -46,15 +66,22 @@ npx skills add zlhhhh8901/longtext-translate
 在 Agent 对话中直接说出你的翻译需求，Skill 会自动触发。比如：
 
 - “把这篇论文翻译成中文：/path/to/paper.pdf”
-- “帮我翻译一下这段英文，目标读者是非技术背景的管理者”
-- “这份译稿质量不太好，帮我审校一下，原文在 original.md，译稿在 draft.md”
+- “帮我翻译一下这段英文，目标读者是非技术背景的普通读者”
+- “这份译稿质量不太好，帮我审校一下，原文在 @original.md，译稿在 @draft.md”
 
-Skill 内置了无障碍流程引导，使用者无需知道其内部实现。
+Skill 内置无障碍流程引导，使用者无需了解内部实现，开箱即用。
+
+## 翻译质量对比
+
+**测试样本**：[Anthropic - When AI builds itself](https://www.anthropic.com/institute/recursive-self-improvement)
+
+**运行模型**：deepseek-v4-pro（推理强度：High，运行环境：ClaudeCode），经「翻译 + 审校 + 精编」全流程产出
+
+**结果对比**：https://compare-gules.vercel.app（译文 A 为 Skill 直出，译文 B 为[数字生命卡兹克](https://mp.weixin.qq.com/s/mJbuKJChVk7ktIHEtKzChg)发布的版本）
 
 ## 费用参考
 
-**测试样本**：《Stein on Writing》英文原版 228 页，10.4 万词。
-> PS: 《哈利·波特与阿兹卡班的囚徒》英文原版 10.7 万词。
+**测试样本**：《Stein on Writing》英文原版 228 页，10.4 万词（体量接近《哈利·波特与阿兹卡班的囚徒》英文原版的 10.7 万词）。
 
 **运行模型**：deepseek-v4-pro（推理强度：High，运行环境：ClaudeCode）
 
@@ -69,22 +96,28 @@ Skill 内置了无障碍流程引导，使用者无需知道其内部实现。
 
 ## 产出文件
 
-所有产出都放在源文件旁边的同名输出目录里（例如 `article.md` → `article-zh/`）：
+翻译结果存放在源 Markdown 文件所在目录，目录名为 `{源文件名}-{目标语言}/`。比如 `article.md` 译后结果放在 `article-zh/` 中。
+
+而源 Markdown 文件的位置取决于输入类型：
+
+-  PDF / EPUB / Word / 图片：规范化后保存在源文件同级目录
+-  内联文本 / URL：保存在 `translate/` 目录
+-  已有文本文件：直接作为源文件使用
+
+目录实际包含的文件因翻译模式和后续选项而异。
 
 ```
 article-zh/
-├── translation.md        ← 译文（必有）
+├── translation.md        ← 最终译文（必有）
 ├── glossary.md           ← 共享术语表（长文本模式）
-├── prompt.md             ← 翻译简报（长文本模式）
+├── prompt.md             ← subagent 共享翻译提示（长文本模式）
 ├── chunk-preview.html    ← 分片预览页面（长文本模式）
-├── chunks/               ← 各分片的原文和译稿（长文本模式）
+├── chunks/               ← 各分片原文与译稿（长文本模式）
 ├── draft.md              ← 审校/精编前的译稿快照
 ├── critique.md           ← 结构化审校报告
 ├── polish-preview.html   ← 排版修正预览页面
-└── bilingual.md          ← 双语对照版
+└── bilingual.md          ← 双语对照文件
 ```
-
-短文本翻译只有 `translation.md` 一个产出。
 
 ## 致谢
 
@@ -92,10 +125,14 @@ article-zh/
 
 此外，以下项目在具体实现环节提供了重要参考或直接支撑：
 
-- [Superpowers](https://github.com/obra/superpowers)：分片预览与排版修正的浏览器交互设计思路参考自该项目。
-- [MinerU](https://github.com/opendatalab/MinerU)：PDF、Word 与图片等文档的规范化提取，直接使用该项目提供的服务。
-- [baoyu-format-markdown](https://github.com/baoyu-io/baoyu-format-markdown)：精编流程中“重点与结构显化”的设计参考自该项目。
-- [chinese-copywriting-guidelines](https://github.com/sparanoid/chinese-copywriting-guidelines)：精编流程中“中文排版与格式修正”的规范依据来源。
+- [MinerU](https://github.com/opendatalab/MinerU)：PDF、Word 与图片等文档的规范化提取，直接使用该项目提供的服务
+- [baoyu-format-markdown](https://github.com/baoyu-io/baoyu-format-markdown)：精编流程中“重点与结构显化”的设计参考自该项目
+- [chinese-copywriting-guidelines](https://github.com/sparanoid/chinese-copywriting-guidelines)：精编流程中“中文排版与格式修正”的规范依据来源
+- [Superpowers](https://github.com/obra/superpowers)：分片预览与排版修正的浏览器交互设计思路参考自该项目
+
+## 友链
+
+[LINUX DO - 新的理想型社区](https://linux.do)
 
 ## 许可证
 
