@@ -16,7 +16,9 @@
 
 ## 工作流程
 
-<img src="assets/introduction.png" alt="工作流程" style="zoom:40%;" />
+<p align="center">
+  <img src="assets/introduction.png" alt="工作流程" width="45%" />
+</p>
 
 ## 主要特性
 
