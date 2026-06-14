@@ -79,7 +79,7 @@ Skill 内置无障碍流程引导，使用者无需了解内部实现，开箱�
 
 **运行模型**：deepseek-v4-pro（推理强度：High，运行环境：ClaudeCode），经「翻译 + 审校 + 精编」全流程产出
 
-**结果对比**：https://compare-gules.vercel.app（译文 A 为 Skill 直出，译文 B 为[数字生命卡兹克](https://mp.weixin.qq.com/s/mJbuKJChVk7ktIHEtKzChg)发布的版本）
+**结果对比**：https://compare-gules.vercel.app （译文 A 为 Skill 直出，译文 B 为[数字生命卡兹克](https://mp.weixin.qq.com/s/mJbuKJChVk7ktIHEtKzChg)发布的版本）
 
 ## 费用参考
 
