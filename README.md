@@ -125,7 +125,7 @@ article-zh/
 
 ## 致谢
 
-本 Skill 在 [baoyu-translate](https://github.com/baoyu-io/baoyu-translate) 的基础上修改而来——分片策略、subagent 并行调度、增强路由等流程骨架均建立在该项目的基础之上。
+本 Skill 在 [baoyu-translate](https://github.com/baoyu-io/baoyu-translate) 的基础上修改而来——分片策略、subagent 并行调度的流程骨架，以及“重写，而不只是翻译”这一核心翻译原则，均源自该项目。
 
 此外，以下项目在具体实现环节提供了重要参考或直接支撑：
 
