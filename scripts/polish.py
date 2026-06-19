@@ -52,8 +52,8 @@ CJKISH_PUNCTUATION = set("，。！？；：、“”‘’（）【】《》「
 CJK_PUNCTUATION_WITHOUT_SURROUNDING_SPACES = "，。！？；：（）【】《》「」『』“”‘’"
 REPEATED_PUNCTUATION_RE = re.compile(r"([！？])\1+")
 REPEATED_MIXED_PUNCTUATION_RE = re.compile(r"([！？]{3,})")
+BLOCKQUOTE_PREFIX_RE = re.compile(r"^([ \t]{0,3}(?:>[ \t]?)+)")
 FORBIDDEN_ANCESTORS = {
-    "blockquote_open",
     "table_open",
     "thead_open",
     "tbody_open",
@@ -605,18 +605,57 @@ def polish_block(block: str) -> str:
     if is_special_definition(block):
         return block
 
+    prefixes = extract_blockquote_prefixes(block)
+    if any(prefixes):
+        lines = block.split("\n")
+        contents = [line[len(prefix):] for line, prefix in zip(lines, prefixes)]
+        polished_lines = run_polish_pipeline("\n".join(contents)).split("\n")
+        if len(polished_lines) == len(prefixes):
+            return "\n".join(prefix + content for prefix, content in zip(prefixes, polished_lines))
+
+    return run_polish_pipeline(block)
+
+
+def extract_blockquote_prefixes(block: str) -> list[str]:
+    prefixes: list[str] = []
+    for line in block.split("\n"):
+        match = BLOCKQUOTE_PREFIX_RE.match(line)
+        prefixes.append(match.group(1) if match else "")
+    return prefixes
+
+
+def run_polish_pipeline(block: str) -> str:
     emphasized = fix_cjk_emphasis(block)
     masked, protected = protect_inline_spans(emphasized)
     parts: list[str] = []
     last_index = 0
+    pending_footnote_pad = False
 
     for match in iter_protected_placeholders(masked, protected):
-        parts.append(polish_visible_text(masked[last_index:match.start()]))
-        parts.append(protected.items[int(match.group(1))])
+        visible = polish_visible_text(masked[last_index:match.start()])
+        protected_text = protected.items[int(match.group(1))]
+
+        if pending_footnote_pad and visible and CHINESE_RE.fullmatch(visible[0]):
+            visible = " " + visible
+        pending_footnote_pad = False
+
+        parts.append(visible)
+        parts.append(protected_text)
         last_index = match.end()
 
-    parts.append(polish_visible_text(masked[last_index:]))
+        if is_footnote_reference(protected_text):
+            pending_footnote_pad = True
+
+    trailing = polish_visible_text(masked[last_index:])
+    if pending_footnote_pad and trailing and CHINESE_RE.fullmatch(trailing[0]):
+        trailing = " " + trailing
+    parts.append(trailing)
+
     return "".join(parts)
+
+
+def is_footnote_reference(text: str) -> bool:
+    return text.startswith("[^") and text.endswith("]")
 
 
 def is_special_definition(block: str) -> bool:
