@@ -174,7 +174,7 @@ python3 {baseDir}/scripts/chunk.py preview <file> [--max-words <chunk_max_words>
 | `glossary.md` | 长文本 | 供 subagent 共用的术语表 |
 | `prompt.md` | 长文本 | 面向 subagent 的共享翻译提示 |
 | `chunks/` | 长文本 | 分片目录。包含源分片 `chunk-NN.md`、译文分片 `chunk-NN-draft.md`，以及可能存在的 `frontmatter.md` |
-| `draft.md` | 审校/精编 | 进入增强流程前的译稿快照 |
+| `draft.md` | 审校/精编 | 增强流程开始前的译稿快照 |
 | `critique.md` | 审校 | 结构化、可证伪的独立审校报告 |
 | `polish-preview.html` | 精编 | 中文排版与格式修正的预览页面；用户应通过 `preview_url` 打开 |
 | `mapping.json` | 双语版 | 源文与译文的块级对齐映射，由 agent 分析两份 dump 输出后生成 |
