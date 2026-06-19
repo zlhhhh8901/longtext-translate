@@ -24,7 +24,7 @@ SPLITTER_VERSION = "markdown-block-v1"
 PLAN_FILE_NAME = "chunk-plan.json"
 PREVIEW_FILE_NAME = "chunk-preview.html"
 PREVIEW_HOST = "127.0.0.1"
-PREVIEW_IDLE_TIMEOUT_SECONDS = 15 * 60
+PREVIEW_IDLE_TIMEOUT_SECONDS = 10 * 60
 
 
 @dataclass
@@ -267,6 +267,10 @@ def make_preview_handler(output_root: Path) -> type[http.server.BaseHTTPRequestH
         def do_GET(self) -> None:
             self.server.last_activity = time.time()  # type: ignore[attr-defined]
             path = self.path.split("?", 1)[0]
+            if path == "/heartbeat":
+                self.send_response(204)
+                self.end_headers()
+                return
             if path not in {"/", f"/{PREVIEW_FILE_NAME}"}:
                 self.send_error(404)
                 return

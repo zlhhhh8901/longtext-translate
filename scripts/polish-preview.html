@@ -851,6 +851,10 @@
 
     init();
 
+    setInterval(function () {
+      fetch("/heartbeat", { method: "GET", cache: "no-store" }).catch(function () {});
+    }, 60000);
+
     function init() {
       try {
         const data = readEmbeddedPreviewData();
